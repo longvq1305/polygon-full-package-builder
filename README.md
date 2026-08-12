@@ -17,6 +17,14 @@ Web tool chạy cục bộ để:
 
 ## Chạy tool
 
+### Cách nhanh nhất trên Windows
+
+Nhấp đúp file **`Chay Polygon Builder.cmd`**. Tool sẽ tự khởi động và mở
+`http://127.0.0.1:4173` trong trình duyệt mặc định. Giữ cửa sổ lệnh đang mở;
+đóng cửa sổ đó khi muốn tắt tool.
+
+### Chạy bằng terminal
+
 ```powershell
 npm start
 ```
