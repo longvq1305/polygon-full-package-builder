@@ -24,7 +24,7 @@ function errorMessage(error) {
 
 export class JobManager {
   constructor({
-    pollIntervalMs = 5_000,
+    pollIntervalMs = 10_000,
     packageTimeoutMs = 4 * 60 * 60 * 1_000,
     sleepImpl = sleep,
     now = () => Date.now(),

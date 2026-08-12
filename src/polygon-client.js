@@ -1,6 +1,19 @@
 import { createHash, randomBytes } from 'node:crypto';
 
 const DEFAULT_BASE_URL = 'https://polygon.codeforces.com/api';
+const DEFAULT_REQUEST_INTERVAL_MS = 1_100;
+const DEFAULT_RATE_LIMIT_RETRIES = 6;
+
+const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+function parseRetryAfter(value, now) {
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1_000;
+  const date = Date.parse(value);
+  if (Number.isNaN(date)) return null;
+  return Math.max(0, date - now);
+}
 
 export class PolygonApiError extends Error {
   constructor(message, { method, statusCode, cause } = {}) {
@@ -50,6 +63,9 @@ export class PolygonClient {
     now = () => Date.now(),
     nonce = () => randomBytes(3).toString('hex'),
     timeoutMs = 30_000,
+    requestIntervalMs = DEFAULT_REQUEST_INTERVAL_MS,
+    maxRateLimitRetries = DEFAULT_RATE_LIMIT_RETRIES,
+    sleepImpl = sleep,
   }) {
     if (!apiKey?.trim() || !secretKey?.trim()) {
       throw new TypeError('API key và secret key là bắt buộc.');
@@ -65,6 +81,12 @@ export class PolygonClient {
     this.now = now;
     this.nonce = nonce;
     this.timeoutMs = timeoutMs;
+    this.requestIntervalMs = Math.max(0, Number(requestIntervalMs) || 0);
+    this.maxRateLimitRetries = Math.max(0, Number(maxRateLimitRetries) || 0);
+    this.sleep = sleepImpl;
+    this.lastRequestAt = 0;
+    this.rateLimitUntil = 0;
+    this.requestQueue = Promise.resolve();
   }
 
   destroy() {
@@ -77,32 +99,25 @@ export class PolygonClient {
       throw new PolygonApiError('Phiên xác thực đã hết hạn.', { method });
     }
 
-    const time = Math.floor(this.now() / 1000);
-    const body = createSignedParameters({
-      apiKey: this.apiKey,
-      secretKey: this.secretKey,
-      method,
-      params,
-      time,
-      nonce: this.nonce(),
-    });
-
     let response;
-    try {
-      response = await this.fetchImpl(`${this.baseUrl}/${method}`, {
-        method: 'POST',
-        headers: {
-          accept: 'application/json',
-          'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
-        },
-        body: body.toString(),
-        signal: AbortSignal.timeout(this.timeoutMs),
-      });
-    } catch (error) {
-      const message = error?.name === 'TimeoutError'
-        ? `Polygon không phản hồi trong ${Math.round(this.timeoutMs / 1000)} giây.`
-        : 'Không thể kết nối tới Polygon.';
-      throw new PolygonApiError(message, { method, cause: error });
+    for (let attempt = 0; attempt <= this.maxRateLimitRetries; attempt += 1) {
+      response = await this.#enqueueRequest(() => this.#fetch(method, params));
+      if (response.status !== 429) break;
+
+      if (attempt === this.maxRateLimitRetries) {
+        throw new PolygonApiError(
+          'Polygon vẫn đang giới hạn tần suất request. Tool đã tự chờ và thử lại nhưng chưa được; hãy chạy lại sau vài phút.',
+          { method, statusCode: 429 },
+        );
+      }
+
+      const retryAfterMs = parseRetryAfter(response.headers.get('retry-after'), this.now());
+      const exponentialBackoffMs = Math.min(60_000, 2_000 * (2 ** attempt));
+      this.rateLimitUntil = Math.max(
+        this.rateLimitUntil,
+        this.now() + (retryAfterMs ?? exponentialBackoffMs),
+      );
+      await response.body?.cancel().catch(() => {});
     }
 
     const text = await response.text();
@@ -124,6 +139,50 @@ export class PolygonClient {
     }
 
     return payload.result;
+  }
+
+  #enqueueRequest(action) {
+    const request = this.requestQueue.then(async () => {
+      const earliestRequestAt = Math.max(
+        this.rateLimitUntil,
+        this.lastRequestAt + this.requestIntervalMs,
+      );
+      const delayMs = Math.max(0, earliestRequestAt - this.now());
+      if (delayMs > 0) await this.sleep(delayMs);
+      this.lastRequestAt = this.now();
+      return action();
+    });
+    this.requestQueue = request.catch(() => {});
+    return request;
+  }
+
+  async #fetch(method, params) {
+    const time = Math.floor(this.now() / 1000);
+    const body = createSignedParameters({
+      apiKey: this.apiKey,
+      secretKey: this.secretKey,
+      method,
+      params,
+      time,
+      nonce: this.nonce(),
+    });
+
+    try {
+      return await this.fetchImpl(`${this.baseUrl}/${method}`, {
+        method: 'POST',
+        headers: {
+          accept: 'application/json',
+          'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
+        },
+        body: body.toString(),
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch (error) {
+      const message = error?.name === 'TimeoutError'
+        ? `Polygon không phản hồi trong ${Math.round(this.timeoutMs / 1000)} giây.`
+        : 'Không thể kết nối tới Polygon.';
+      throw new PolygonApiError(message, { method, cause: error });
+    }
   }
 
   listProblems() {

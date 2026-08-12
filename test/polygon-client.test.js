@@ -68,3 +68,78 @@ test('destroy xóa credential khỏi client', async () => {
   assert.equal(client.secretKey, '');
   await assert.rejects(() => client.listProblems(), /hết hạn/);
 });
+
+test('PolygonClient chờ Retry-After và tự thử lại HTTP 429 không phải JSON', async () => {
+  let clock = 1_700_000_000_000;
+  let calls = 0;
+  const waits = [];
+  const client = new PolygonClient({
+    apiKey: 'key',
+    secretKey: 'secret',
+    now: () => clock,
+    requestIntervalMs: 0,
+    sleepImpl: async (milliseconds) => {
+      waits.push(milliseconds);
+      clock += milliseconds;
+    },
+    fetchImpl: async () => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response('Too Many Requests', {
+          status: 429,
+          headers: { 'retry-after': '3' },
+        });
+      }
+      return new Response(JSON.stringify({ status: 'OK', result: ['recovered'] }));
+    },
+  });
+
+  const result = await client.listProblems();
+  assert.deepEqual(result, ['recovered']);
+  assert.equal(calls, 2);
+  assert.deepEqual(waits, [3_000]);
+});
+
+test('PolygonClient trả thông báo rate limit rõ ràng sau khi hết retry', async () => {
+  let clock = 1_700_000_000_000;
+  let calls = 0;
+  const client = new PolygonClient({
+    apiKey: 'key',
+    secretKey: 'secret',
+    now: () => clock,
+    requestIntervalMs: 0,
+    maxRateLimitRetries: 2,
+    sleepImpl: async (milliseconds) => { clock += milliseconds; },
+    fetchImpl: async () => {
+      calls += 1;
+      return new Response('<html>rate limited</html>', { status: 429 });
+    },
+  });
+
+  await assert.rejects(() => client.listProblems(), (error) => {
+    assert.ok(error instanceof PolygonApiError);
+    assert.equal(error.statusCode, 429);
+    assert.match(error.message, /giới hạn tần suất/);
+    return true;
+  });
+  assert.equal(calls, 3);
+});
+
+test('PolygonClient tuần tự hóa request đồng thời theo khoảng cách tối thiểu', async () => {
+  let clock = 10_000;
+  const requestTimes = [];
+  const client = new PolygonClient({
+    apiKey: 'key',
+    secretKey: 'secret',
+    now: () => clock,
+    requestIntervalMs: 1_000,
+    sleepImpl: async (milliseconds) => { clock += milliseconds; },
+    fetchImpl: async () => {
+      requestTimes.push(clock);
+      return new Response(JSON.stringify({ status: 'OK', result: [] }));
+    },
+  });
+
+  await Promise.all([client.listProblems(), client.listProblems()]);
+  assert.deepEqual(requestTimes, [10_000, 11_000]);
+});

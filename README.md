@@ -8,6 +8,7 @@ Web tool chạy cục bộ để:
 - theo dõi package qua `problem.packages` đến trạng thái `READY` hoặc `FAILED`;
 - giới hạn 1–4 problem build song song và hiển thị lỗi riêng cho từng problem.
 - tự bỏ qua revision đã có full package và problem đang có thay đổi chưa commit.
+- tự điều tiết request và chờ/thử lại khi Polygon trả HTTP 429.
 
 ## Yêu cầu
 
