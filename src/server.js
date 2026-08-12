@@ -124,6 +124,10 @@ async function createBuildJob(request, response, sessionId) {
     sendError(response, 403, 'Danh sách có problem không thuộc quyền OWNER của phiên này.');
     return;
   }
+  if (selectedProblems.some((problem) => problem.modified)) {
+    sendError(response, 409, 'Có problem chưa commit thay đổi. Hãy commit trên Polygon rồi kết nối lại.');
+    return;
+  }
 
   sessions.delete(sessionId);
   const job = jobManager.createJob({
@@ -150,7 +154,7 @@ async function serveStatic(pathname, response) {
     response.writeHead(200, {
       'content-type': mimeTypes[extname(filePath)] || 'application/octet-stream',
       'content-length': fileStat.size,
-      'cache-control': pathname === '/' ? 'no-store' : 'public, max-age=3600',
+      'cache-control': 'no-store',
       'x-content-type-options': 'nosniff',
       'content-security-policy': "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
       'referrer-policy': 'no-referrer',

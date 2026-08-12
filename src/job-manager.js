@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
 const TERMINAL_PACKAGE_STATES = new Set(['READY', 'FAILED']);
-const TERMINAL_ITEM_STATES = new Set(['READY', 'FAILED', 'CANCELLED']);
+const TERMINAL_ITEM_STATES = new Set(['READY', 'SKIPPED', 'FAILED', 'CANCELLED']);
+const DUPLICATE_FULL_PACKAGE_PATTERN = /already non-failed full package/i;
+const PACKAGE_DISCOVERY_TIMEOUT_MS = 2 * 60 * 1_000;
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -89,11 +91,12 @@ export class JobManager {
     const counts = items.reduce((result, item) => {
       result.total += 1;
       if (TERMINAL_ITEM_STATES.has(item.state)) result.completed += 1;
-      if (item.state === 'READY') result.ready += 1;
+      if (item.state === 'READY' || item.state === 'SKIPPED') result.ready += 1;
+      if (item.state === 'SKIPPED') result.skipped += 1;
       if (item.state === 'FAILED') result.failed += 1;
       if (item.state === 'CANCELLED') result.cancelled += 1;
       return result;
-    }, { total: 0, completed: 0, ready: 0, failed: 0, cancelled: 0 });
+    }, { total: 0, completed: 0, ready: 0, skipped: 0, failed: 0, cancelled: 0 });
 
     return {
       id: job.id,
@@ -151,17 +154,43 @@ export class JobManager {
     item.startedAt = new Date(this.now()).toISOString();
 
     try {
-      const createdPackage = await job.client.buildFullPackage(item.problem.id, {
-        verify: job.verify,
-      });
-      if (!createdPackage || createdPackage.id === undefined || createdPackage.id === null) {
-        throw new Error('Polygon không trả về ID của package vừa tạo.');
+      const packagesBeforeBuild = await job.client.listPackages(item.problem.id);
+      const knownPackageIds = new Set(packagesBeforeBuild.map((candidate) => String(candidate.id)));
+      let createdPackage;
+
+      try {
+        const buildResult = await job.client.buildFullPackage(item.problem.id, {
+          verify: job.verify,
+        });
+        createdPackage = this.#normalizeBuildResult(buildResult);
+      } catch (error) {
+        if (!DUPLICATE_FULL_PACKAGE_PATTERN.test(errorMessage(error))) throw error;
+
+        const packages = await job.client.listPackages(item.problem.id);
+        const existingPackage = this.#latestUsablePackage(packages, item.problem.revision);
+        if (!existingPackage) throw error;
+
+        this.#applyPackage(item, existingPackage);
+        if (existingPackage.state === 'READY') {
+          item.state = 'SKIPPED';
+          item.packageComment = 'Revision này đã có full package sẵn sàng; không tạo bản trùng.';
+          return;
+        }
+        if (!TERMINAL_PACKAGE_STATES.has(existingPackage.state)) {
+          await this.#waitForPackage(job, item);
+        }
+        if (item.state === 'FAILED' && !item.error) {
+          item.error = item.packageComment || 'Polygon không build được package.';
+        }
+        return;
       }
 
-      item.packageId = createdPackage.id;
-      item.packageType = createdPackage.type || 'full';
-      item.packageComment = createdPackage.comment || '';
-      item.state = createdPackage.state || 'PENDING';
+      if (!createdPackage) {
+        item.state = 'PENDING';
+        createdPackage = await this.#discoverNewPackage(job, item, knownPackageIds);
+      }
+
+      this.#applyPackage(item, createdPackage);
 
       if (!TERMINAL_PACKAGE_STATES.has(item.state)) {
         await this.#waitForPackage(job, item);
@@ -176,6 +205,65 @@ export class JobManager {
     } finally {
       item.finishedAt = new Date(this.now()).toISOString();
     }
+  }
+
+  #normalizeBuildResult(buildResult) {
+    if (buildResult && typeof buildResult === 'object' && buildResult.id !== undefined) {
+      return buildResult;
+    }
+    if (typeof buildResult === 'number' || typeof buildResult === 'string') {
+      return { id: buildResult, state: 'PENDING', type: 'standard', comment: '' };
+    }
+    return null;
+  }
+
+  #latestUsablePackage(packages, revision) {
+    return this.#latestPackage(packages, revision, { includeFailed: false });
+  }
+
+  #latestPackage(packages, revision, { includeFailed = true } = {}) {
+    return packages
+      .filter((candidate) => {
+        return String(candidate.revision) === String(revision)
+          && (includeFailed || candidate.state !== 'FAILED');
+      })
+      .sort((left, right) => {
+        return (Number(right.creationTimeSeconds) || 0) - (Number(left.creationTimeSeconds) || 0)
+          || (Number(right.id) || 0) - (Number(left.id) || 0);
+      })[0] || null;
+  }
+
+  #applyPackage(item, packageInfo) {
+    item.packageId = packageInfo.id;
+    item.packageType = packageInfo.type || 'standard';
+    item.packageComment = packageInfo.comment || '';
+    item.state = packageInfo.state || 'PENDING';
+  }
+
+  async #discoverNewPackage(job, item, knownPackageIds) {
+    const deadline = this.now() + Math.min(PACKAGE_DISCOVERY_TIMEOUT_MS, this.packageTimeoutMs);
+    let consecutivePollErrors = 0;
+
+    while (this.now() < deadline) {
+      if (job.cancelRequested) {
+        throw new Error('Đã dừng trước khi xác định được package mới trên Polygon.');
+      }
+
+      try {
+        const packages = await job.client.listPackages(item.problem.id);
+        consecutivePollErrors = 0;
+        const newPackages = packages.filter((candidate) => !knownPackageIds.has(String(candidate.id)));
+        const discovered = this.#latestPackage(newPackages, item.problem.revision);
+        if (discovered) return discovered;
+      } catch (error) {
+        consecutivePollErrors += 1;
+        if (consecutivePollErrors >= 3) throw error;
+      }
+
+      await this.sleep(this.pollIntervalMs);
+    }
+
+    throw new Error('Polygon đã nhận lệnh build nhưng tool không tìm thấy package mới trong 2 phút.');
   }
 
   async #waitForPackage(job, item) {

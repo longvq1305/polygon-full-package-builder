@@ -7,6 +7,7 @@ Web tool chạy cục bộ để:
 - build package bằng `problem.buildPackage` với `full=true`;
 - theo dõi package qua `problem.packages` đến trạng thái `READY` hoặc `FAILED`;
 - giới hạn 1–4 problem build song song và hiển thị lỗi riêng cho từng problem.
+- tự bỏ qua revision đã có full package và problem đang có thay đổi chưa commit.
 
 ## Yêu cầu
 
@@ -45,6 +46,8 @@ npm start
 - **Verify solutions** yêu cầu Polygon chạy tất cả solution trên tất cả test và có thể làm job lâu hơn đáng kể.
 - Full package được tạo trên Polygon. Tool này không tự tải file ZIP xuống máy.
 - Một problem lỗi không làm dừng các problem còn lại.
+- Revision đã có full package `READY` được đánh dấu **Đã có package**, không bị báo lỗi và không tạo bản trùng.
+- Problem có working copy chưa commit được hiển thị nhưng không được chọn; hãy commit trên Polygon rồi kết nối lại.
 
 ## Kiểm thử
 

@@ -119,6 +119,8 @@ tbody tr:hover { background: #faf9f4; }
 .status-pill.ready { background: var(--green-soft); color: var(--green); }
 .status-pill.running, .status-pill.pending, .status-pill.submitting { background: #f5e8c8; color: #7c5a10; }
 .status-pill.cancelled { background: #ecebea; color: #656565; }
+.status-pill.skipped { background: #dfe9ee; color: #315c70; }
+.checkbox-cell input:disabled { cursor: not-allowed; opacity: .4; }
 .empty-state { padding: 34px; color: var(--muted); text-align: center; }
 
 .build-options { display: grid; grid-template-columns: 180px minmax(270px, 1fr) auto; gap: 30px; align-items: center; margin-top: 24px; }

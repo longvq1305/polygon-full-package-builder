@@ -88,7 +88,7 @@ function renderProblems() {
     return `
       <tr data-problem-row="${escapeHtml(problem.id)}">
         <td class="checkbox-cell">
-          <input type="checkbox" data-problem-id="${escapeHtml(problem.id)}" ${state.selected.has(String(problem.id)) ? 'checked' : ''} aria-label="Chọn ${escapeHtml(problem.name)}">
+          <input type="checkbox" data-problem-id="${escapeHtml(problem.id)}" ${state.selected.has(String(problem.id)) ? 'checked' : ''} ${problem.modified ? 'disabled' : ''} aria-label="Chọn ${escapeHtml(problem.name)}">
         </td>
         <td><span class="problem-name">${escapeHtml(problem.name)}</span><span class="problem-id">ID ${escapeHtml(problem.id)} · ${escapeHtml(problem.owner)}</span></td>
         <td>${escapeHtml(problem.revision ?? '—')}</td>
@@ -141,10 +141,11 @@ elements.credentialsForm.addEventListener('submit', async (event) => {
     });
     state.sessionId = result.sessionId;
     state.problems = result.problems;
-    state.selected = new Set(result.problems.map((problem) => String(problem.id)));
+    state.selected = new Set(result.problems.filter((problem) => !problem.modified).map((problem) => String(problem.id)));
     elements.secretKey.value = '';
+    const modifiedCount = result.problems.filter((problem) => problem.modified).length;
     elements.problemSummary.textContent = result.problems.length
-      ? `Tìm thấy ${result.problems.length} problem bạn sở hữu. Mặc định đã chọn tất cả.`
+      ? `Tìm thấy ${result.problems.length} problem bạn sở hữu. Đã chọn ${result.problems.length - modifiedCount} problem sẵn sàng${modifiedCount ? `; ${modifiedCount} problem chưa commit được bỏ qua.` : '.'}`
       : 'Không tìm thấy problem nào có quyền OWNER.';
     elements.credentialsPanel.hidden = true;
     elements.problemsPanel.hidden = false;
@@ -167,7 +168,9 @@ elements.problemsBody.addEventListener('change', (event) => {
 });
 
 elements.selectAll.addEventListener('click', () => {
-  for (const problem of state.problems) state.selected.add(String(problem.id));
+  for (const problem of state.problems) {
+    if (!problem.modified) state.selected.add(String(problem.id));
+  }
   renderProblems();
 });
 elements.clearAll.addEventListener('click', () => {
@@ -212,6 +215,7 @@ function stateLabel(itemState) {
     READY: 'Hoàn tất',
     FAILED: 'Thất bại',
     CANCELLED: 'Đã dừng',
+    SKIPPED: 'Đã có package',
   })[itemState] || itemState;
 }
 
