@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Build full package hàng loạt cho các problem bạn sở hữu trên Codeforces Polygon.">
+    <title>Polygon Full Package Builder</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 48 48" role="img">
+          <path d="M24 4 42 14.5v19L24 44 6 33.5v-19L24 4Z"></path>
+          <path d="m24 12 11 6.4v11.2L24 36l-11-6.4V18.4L24 12Z"></path>
+        </svg>
+      </div>
+      <div>
+        <p class="eyebrow">Codeforces Polygon utility</p>
+        <h1>Full Package Builder</h1>
+      </div>
+      <span class="local-badge">Chạy cục bộ</span>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div>
+          <p class="kicker">Một lần nhập khóa. Tất cả package.</p>
+          <h2>Build full package cho toàn bộ problem bạn sở hữu.</h2>
+          <p class="hero-copy">
+            Tool tự tìm các problem có quyền <strong>OWNER</strong>, gửi build theo hàng đợi và theo dõi đến khi Polygon hoàn tất.
+          </p>
+        </div>
+        <div class="security-note">
+          <span class="security-icon" aria-hidden="true">◆</span>
+          <div>
+            <strong>Khóa không được lưu xuống đĩa</strong>
+            <p>API key và secret chỉ tồn tại trong bộ nhớ của tiến trình cục bộ, rồi được xóa khi job kết thúc.</p>
+          </div>
+        </div>
+      </section>
+
+      <div id="alert" class="alert" role="status" aria-live="polite" hidden></div>
+
+      <section id="credentials-panel" class="panel credentials-panel">
+        <div class="panel-number">01</div>
+        <div class="panel-heading">
+          <p class="eyebrow">Kết nối</p>
+          <h3>Thông tin Polygon API</h3>
+          <p>Tạo key tại trang Settings → API của Polygon. Secret sẽ không xuất hiện lại sau khi rời trang đó.</p>
+        </div>
+
+        <form id="credentials-form" class="credentials-form">
+          <label>
+            <span>API key</span>
+            <input id="api-key" name="apiKey" type="text" autocomplete="off" spellcheck="false" required placeholder="Nhập API key">
+          </label>
+          <div class="field-group">
+            <label for="secret-key"><span>Secret key</span></label>
+            <span class="secret-field">
+              <input id="secret-key" name="secretKey" type="password" autocomplete="new-password" spellcheck="false" required placeholder="Nhập secret key">
+              <button id="toggle-secret" type="button" class="icon-button" aria-label="Hiện secret key">Hiện</button>
+            </span>
+          </div>
+          <button id="connect-button" type="submit" class="primary-button">
+            <span>Kết nối và tìm problem</span>
+            <span aria-hidden="true">→</span>
+          </button>
+        </form>
+      </section>
+
+      <section id="problems-panel" class="panel" hidden>
+        <div class="panel-number">02</div>
+        <div class="panel-heading selection-heading">
+          <div>
+            <p class="eyebrow">Phạm vi build</p>
+            <h3>Chọn problem</h3>
+            <p id="problem-summary"></p>
+          </div>
+          <button id="reconnect-button" type="button" class="text-button">Đổi API key</button>
+        </div>
+
+        <div class="toolbar">
+          <label class="search-field">
+            <span class="sr-only">Tìm problem</span>
+            <span aria-hidden="true">⌕</span>
+            <input id="problem-filter" type="search" placeholder="Tìm theo tên hoặc ID...">
+          </label>
+          <button id="select-all" type="button" class="secondary-button">Chọn tất cả</button>
+          <button id="clear-all" type="button" class="secondary-button">Bỏ chọn</button>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="checkbox-cell"><span class="sr-only">Chọn</span></th>
+                <th>Problem</th>
+                <th>Revision</th>
+                <th>Package gần nhất</th>
+                <th>Trạng thái</th>
+              </tr>
+            </thead>
+            <tbody id="problems-body"></tbody>
+          </table>
+          <div id="empty-filter" class="empty-state" hidden>Không có problem khớp từ khóa.</div>
+        </div>
+
+        <div class="build-options">
+          <label>
+            <span>Build song song</span>
+            <select id="concurrency">
+              <option value="1">1 problem</option>
+              <option value="2" selected>2 problems</option>
+              <option value="3">3 problems</option>
+              <option value="4">4 problems</option>
+            </select>
+          </label>
+          <label class="toggle-row">
+            <input id="verify" type="checkbox">
+            <span class="toggle" aria-hidden="true"></span>
+            <span>
+              <strong>Verify solutions</strong>
+              <small>Chạy mọi solution trên mọi test; có thể mất nhiều thời gian.</small>
+            </span>
+          </label>
+          <div class="build-action">
+            <span id="selected-count">0 problem đã chọn</span>
+            <button id="build-button" type="button" class="primary-button">Build full package <span aria-hidden="true">→</span></button>
+          </div>
+        </div>
+      </section>
+
+      <section id="progress-panel" class="panel" hidden>
+        <div class="panel-number">03</div>
+        <div class="panel-heading progress-heading">
+          <div>
+            <p class="eyebrow">Đang xử lý</p>
+            <h3 id="job-title">Tiến độ build</h3>
+            <p id="job-summary">Đang gửi yêu cầu tới Polygon…</p>
+          </div>
+          <button id="cancel-button" type="button" class="danger-button">Dừng theo dõi</button>
+        </div>
+
+        <div class="progress-track" aria-hidden="true"><div id="progress-bar"></div></div>
+        <div class="stats-grid">
+          <div><span id="stat-total">0</span><small>Tổng</small></div>
+          <div><span id="stat-ready">0</span><small>Hoàn tất</small></div>
+          <div><span id="stat-running">0</span><small>Đang chạy</small></div>
+          <div><span id="stat-failed">0</span><small>Lỗi</small></div>
+        </div>
+
+        <div class="table-wrap progress-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Problem</th>
+                <th>Package</th>
+                <th>Trạng thái</th>
+                <th>Chi tiết</th>
+              </tr>
+            </thead>
+            <tbody id="progress-body"></tbody>
+          </table>
+        </div>
+
+        <div id="finished-actions" class="finished-actions" hidden>
+          <button id="new-job-button" type="button" class="primary-button">Tạo job mới</button>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Polygon Full Package Builder</span>
+      <span>Không liên kết chính thức với Codeforces.</span>
+    </footer>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

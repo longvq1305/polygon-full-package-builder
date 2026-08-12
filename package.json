@@ -1,0 +1,15 @@
+{
+  "name": "polygon-full-package-builder",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local web tool to build full packages for every owned Codeforces Polygon problem.",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test",
+    "check": "node --check src/server.js && node --check src/polygon-client.js && node --check src/job-manager.js && node --check public/app.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
