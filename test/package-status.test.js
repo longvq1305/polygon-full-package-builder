@@ -4,7 +4,7 @@ import {
   isEligibleProblem,
   supportsPackageHistoryFilter,
 } from '../public/package-status.js';
-import { classifyPackageStatus } from '../src/server.js';
+import { classifyPackageStatus, resolveInitialPackageStatus } from '../src/server.js';
 
 const problemWithPackage = { id: 1, latestPackage: 9 };
 
@@ -49,4 +49,11 @@ test('giao diện từ chối backend cũ chưa có bộ lọc lịch sử', () 
     ok: true,
     capabilities: ['full-package-history-filter-v1'],
   }), true);
+});
+
+test('trạng thái FULL đã lưu được ưu tiên và không bị kiểm tra lại', () => {
+  const statuses = new Map([['42', 'FULL']]);
+  assert.equal(resolveInitialPackageStatus({ id: 42 }, statuses), 'FULL');
+  assert.equal(resolveInitialPackageStatus({ id: 43 }, statuses), 'UNBUILT');
+  assert.equal(resolveInitialPackageStatus({ id: 44, latestPackage: 9 }, statuses), 'LOADING');
 });

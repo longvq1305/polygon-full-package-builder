@@ -37,7 +37,12 @@ test('FULL được nhớ lâu dài, STANDARD được quét lại khi hết h�
   const profile = fingerprintCredentials('api-key', 'secret-key');
   let clock = 1_000;
   const store = new PackageStatusStore({ filePath, ttlMs: 500, now: () => clock });
-  await store.setStatus(profile, { id: 1, latestPackage: 3 }, 'FULL');
+  await store.setStatus(profile, {
+    id: 1,
+    name: 'Problem đã có full',
+    revision: 8,
+    latestPackage: 3,
+  }, 'FULL');
   await store.setStatus(profile, { id: 2, latestPackage: 3 }, 'STANDARD');
 
   assert.equal((await store.getStatuses(profile, [{ id: 2, latestPackage: 4 }])).has('2'), false);
@@ -49,6 +54,14 @@ test('FULL được nhớ lâu dài, STANDARD được quét lại khi hết h�
   assert.equal(expired.get('1'), 'FULL');
   assert.equal(expired.has('2'), false);
 
-  await store.resetProfile(profile);
-  assert.equal((await store.getStatuses(profile, [{ id: 1, latestPackage: 3 }])).size, 0);
+  const reopenedStore = new PackageStatusStore({ filePath, ttlMs: 500, now: () => 99_000 });
+  const afterRestart = await reopenedStore.getStatuses(profile, [{ id: 1 }]);
+  assert.equal(afterRestart.get('1'), 'FULL');
+
+  const raw = JSON.parse(await readFile(filePath, 'utf8'));
+  assert.equal(raw.profiles[profile].problems['1'].name, 'Problem đã có full');
+  assert.equal(raw.profiles[profile].problems['1'].revision, 8);
+
+  await reopenedStore.resetProfile(profile);
+  assert.equal((await reopenedStore.getStatuses(profile, [{ id: 1, latestPackage: 3 }])).size, 0);
 });

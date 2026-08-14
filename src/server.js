@@ -77,9 +77,11 @@ function getSession(sessionId) {
   return session;
 }
 
-function initialPackageStatus(problem, storedStatuses) {
+export function resolveInitialPackageStatus(problem, storedStatuses) {
+  const storedStatus = storedStatuses.get(String(problem.id));
+  if (storedStatus) return storedStatus;
   if (problem.latestPackage === undefined || problem.latestPackage === null) return 'UNBUILT';
-  return storedStatuses.get(String(problem.id)) || 'LOADING';
+  return 'LOADING';
 }
 
 function publicSessionProblem(session, problem) {
@@ -124,7 +126,7 @@ async function openSession({ apiKey, secretKey, remember = false }, response) {
     statusProfileKey,
     packageStatuses: new Map(ownedProblems.map((problem) => [
       String(problem.id),
-      initialPackageStatus(problem, storedStatuses),
+      resolveInitialPackageStatus(problem, storedStatuses),
     ])),
     storedPackageStatusIds: new Set(storedStatuses.keys()),
     expiresAt: Date.now() + SESSION_TTL_MS,

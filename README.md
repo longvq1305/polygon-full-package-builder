@@ -49,7 +49,7 @@ npm start
 - Server mặc định chỉ lắng nghe trên `127.0.0.1`, không mở ra mạng LAN.
 - Credential được gửi bằng POST tới tiến trình cục bộ, không nằm trong URL hay log.
 - Khi bật **Ghi nhớ**, credential được Windows DPAPI mã hóa cho tài khoản Windows hiện tại và lưu tại `%APPDATA%\PolygonFullPackageBuilder\credentials.dat`; không lưu plaintext, local storage hoặc cookie.
-- Trạng thái package nằm trong một file JSON nhỏ tại `%APPDATA%\PolygonFullPackageBuilder\package-status.json`. File chỉ chứa problem ID, revision, trạng thái, thời điểm kiểm tra và fingerprint SHA-256 một chiều; không chứa API key hoặc secret key.
+- Trạng thái của mọi problem đã kiểm tra thành công nằm trong một file JSON nhỏ tại `%APPDATA%\PolygonFullPackageBuilder\package-status.json`. File chỉ chứa problem ID, tên, revision, trạng thái, thời điểm kiểm tra và fingerprint SHA-256 một chiều; không chứa API key hoặc secret key.
 - File trạng thái nằm ngoài thư mục project nên không được Git theo dõi và không thể bị push cùng source code.
 - Khi không bật **Ghi nhớ**, credential chỉ tồn tại trong RAM. Nút **Quên khóa đã lưu** xóa file DPAPI.
 - Một phiên/client được dùng lại giữa nhiều job để giữ chung hàng đợi và cooldown rate limit.
@@ -65,7 +65,7 @@ npm start
 - Problem có working copy chưa commit được hiển thị nhưng không được chọn; hãy commit trên Polygon rồi kết nối lại.
 - Request được tuần tự hóa, mặc định cách nhau ít nhất 5 giây. Sau HTTP 429, khoảng cách tăng ít nhất 10 giây và tool tự backoff tối đa 8 lần.
 - Loại package được đọc tuần tự trong nền và tạm dừng khi job build chạy để không chiếm hàng đợi request.
-- Trạng thái `FULL` trong file cục bộ được dùng lại lâu dài; `STANDARD/UNBUILT` được quét lại sau 24 giờ hoặc khi package revision thay đổi. Nút **Quét lại trạng thái** xóa dữ liệu của cặp khóa hiện tại rồi đọc lại từ Polygon.
+- Trạng thái `FULL` trong file cục bộ được dùng lại lâu dài, kể cả sau khi đóng/mở tool; problem đã biết có full package được ẩn ngay và không gọi lại `problem.packages`. `STANDARD/UNBUILT` được quét lại sau 24 giờ hoặc khi package revision thay đổi. Nút **Quét lại trạng thái** xóa dữ liệu của cặp khóa hiện tại rồi đọc lại từ Polygon.
 - Giao diện kiểm tra capability của backend và cảnh báo nếu một tiến trình phiên bản cũ vẫn đang giữ cổng 4173.
 
 ## Kiểm thử

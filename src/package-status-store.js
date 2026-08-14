@@ -81,6 +81,8 @@ export class PackageStatusStore {
     const profile = this.data.profiles[profileKey] || { lastUsedAt: now, problems: {} };
     profile.lastUsedAt = now;
     profile.problems[String(problem.id)] = {
+      name: problem.name ?? null,
+      revision: problem.revision ?? null,
       status,
       checkedAt: now,
       latestPackage: problem.latestPackage ?? null,
