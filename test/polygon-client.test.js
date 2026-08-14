@@ -51,6 +51,31 @@ test('PolygonClient gửi POST form và đọc result', async () => {
   assert.match(requestBody.get('apiSig'), /^123456[0-9a-f]{128}$/);
 });
 
+test('PolygonClient commit working copy với nội dung commit trống', async () => {
+  let captured;
+  const client = new PolygonClient({
+    apiKey: 'key',
+    secretKey: 'secret',
+    now: () => 1_700_000_000_000,
+    nonce: () => '654321',
+    fetchImpl: async (url, options) => {
+      captured = { url, options };
+      return new Response(JSON.stringify({
+        status: 'OK',
+        result: { committed: true, conflictOccurred: false, message: '' },
+      }));
+    },
+  });
+
+  const result = await client.commitChanges(42);
+  const requestBody = new URLSearchParams(captured.options.body);
+  assert.equal(captured.url, 'https://polygon.codeforces.com/api/problem.commitChanges');
+  assert.equal(requestBody.get('problemId'), '42');
+  assert.equal(requestBody.get('message'), '');
+  assert.equal(requestBody.get('minorChanges'), 'true');
+  assert.equal(result.committed, true);
+});
+
 test('PolygonClient chuyển lỗi API thành PolygonApiError', async () => {
   const client = new PolygonClient({
     apiKey: 'key',

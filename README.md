@@ -7,7 +7,8 @@ Web tool chạy cục bộ để:
 - build package bằng `problem.buildPackage` với `full=true`;
 - theo dõi package qua `problem.packages` đến trạng thái `READY` hoặc `FAILED`;
 - giới hạn 1–4 problem build song song và hiển thị lỗi riêng cho từng problem.
-- tự bỏ qua revision đã có full package và problem đang có thay đổi chưa commit.
+- tự bỏ qua revision đã có full package; riêng problem có working copy chưa commit vẫn được đưa vào danh sách để xử lý.
+- tự gọi `problem.commitChanges` với commit message rỗng trước khi build problem có thay đổi.
 - tự điều tiết request và chờ/thử lại khi Polygon trả HTTP 429.
 - tùy chọn ghi nhớ credential bằng Windows DPAPI để dùng lại sau khi restart và giữa nhiều job.
 - ghi nhớ trạng thái package trong một file JSON nhỏ trên máy, tách riêng theo fingerprint SHA-256 của từng cặp API key/secret key.
@@ -17,7 +18,7 @@ Web tool chạy cục bộ để:
 
 - Node.js 20 trở lên.
 - API key/secret được tạo trong **Polygon → Settings → API**.
-- Các problem phải không có thay đổi chưa commit thì Polygon mới có thể tạo package.
+- API key phải có quyền OWNER/WRITE để tool có thể commit và build package.
 
 ## Chạy tool
 
@@ -62,7 +63,7 @@ npm start
 - Full package được tạo trên Polygon. Tool này không tự tải file ZIP xuống máy.
 - Một problem lỗi không làm dừng các problem còn lại.
 - Revision đã có full package `READY` được đánh dấu **Đã có package**, không bị báo lỗi và không tạo bản trùng.
-- Problem có working copy chưa commit được hiển thị nhưng không được chọn; hãy commit trên Polygon rồi kết nối lại.
+- Problem có working copy chưa commit vẫn được chọn. Khi job chạy, tool gọi `problem.commitChanges` với `message=""` và `minorChanges=true`, sau đó mới build full package. Nếu commit bị xung đột hoặc Polygon từ chối, riêng problem đó được báo lỗi và các problem khác vẫn tiếp tục.
 - Request được tuần tự hóa, mặc định cách nhau ít nhất 5 giây. Sau HTTP 429, khoảng cách tăng ít nhất 10 giây và tool tự backoff tối đa 8 lần.
 - Loại package được đọc tuần tự trong nền và tạm dừng khi job build chạy để không chiếm hàng đợi request.
 - Trạng thái `FULL` trong file cục bộ được dùng lại lâu dài, kể cả sau khi đóng/mở tool; problem đã biết có full package được ẩn ngay và không gọi lại `problem.packages`. `STANDARD/UNBUILT` được quét lại sau 24 giờ hoặc khi package revision thay đổi. Nút **Quét lại trạng thái** xóa dữ liệu của cặp khóa hiện tại rồi đọc lại từ Polygon.

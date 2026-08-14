@@ -1,9 +1,14 @@
-export const requiredServerCapability = 'full-package-history-filter-v1';
+export const requiredServerCapabilities = [
+  'full-package-history-filter-v1',
+  'auto-commit-before-build-v1',
+];
 
 export function isEligibleProblem(problem) {
-  return problem.packageStatus === 'UNBUILT' || problem.packageStatus === 'STANDARD';
+  return Boolean(problem.modified)
+    || problem.packageStatus === 'UNBUILT'
+    || problem.packageStatus === 'STANDARD';
 }
 
 export function supportsPackageHistoryFilter(health) {
-  return Boolean(health?.capabilities?.includes(requiredServerCapability));
+  return requiredServerCapabilities.every((capability) => health?.capabilities?.includes(capability));
 }

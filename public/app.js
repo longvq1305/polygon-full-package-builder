@@ -104,13 +104,16 @@ function packageStatusBadge(status) {
 
 function updateProblemSummary() {
   const eligible = state.problems.filter(isEligibleProblem);
-  const unbuilt = eligible.filter((problem) => problem.packageStatus === 'UNBUILT').length;
-  const standard = eligible.filter((problem) => problem.packageStatus === 'STANDARD').length;
   const modified = eligible.filter((problem) => problem.modified).length;
-  const suffix = modified ? `; ${modified} problem chưa commit không thể chọn.` : '.';
+  const committed = eligible.filter((problem) => !problem.modified);
+  const unbuilt = committed.filter((problem) => problem.packageStatus === 'UNBUILT').length;
+  const standard = committed.filter((problem) => problem.packageStatus === 'STANDARD').length;
+  const suffix = modified
+    ? `; ${modified} problem chưa commit sẽ được tự commit trước khi build.`
+    : '.';
   elements.problemSummary.textContent = state.packageStatusLoading
-    ? `Tạm thời có ${eligible.length} problem chưa có full package; danh sách đang tiếp tục cập nhật${suffix}`
-    : `Có ${eligible.length} problem chưa có full package: ${unbuilt} chưa build, ${standard} Standard${suffix}`;
+    ? `Tạm thời có ${eligible.length} problem cần xử lý; danh sách đang tiếp tục cập nhật${suffix}`
+    : `Có ${eligible.length} problem cần xử lý: ${unbuilt} chưa build, ${standard} Standard${suffix}`;
 }
 
 function renderProblems() {
@@ -128,7 +131,7 @@ function renderProblems() {
     return `
       <tr data-problem-row="${escapeHtml(problem.id)}">
         <td class="checkbox-cell">
-          <input type="checkbox" data-problem-id="${escapeHtml(problem.id)}" ${state.selected.has(String(problem.id)) ? 'checked' : ''} ${problem.modified ? 'disabled' : ''} aria-label="Chọn ${escapeHtml(problem.name)}">
+          <input type="checkbox" data-problem-id="${escapeHtml(problem.id)}" ${state.selected.has(String(problem.id)) ? 'checked' : ''} aria-label="Chọn ${escapeHtml(problem.name)}">
         </td>
         <td><span class="problem-name">${escapeHtml(problem.name)}</span><span class="problem-id">ID ${escapeHtml(problem.id)} · ${escapeHtml(problem.owner)}</span></td>
         <td>${escapeHtml(problem.revision ?? '—')}</td>
@@ -150,7 +153,7 @@ function renderProblems() {
 
 function updateSelectedCount() {
   const selectableIds = new Set(state.problems
-    .filter((problem) => isEligibleProblem(problem) && !problem.modified)
+    .filter(isEligibleProblem)
     .map((problem) => String(problem.id)));
   for (const problemId of state.selected) {
     if (!selectableIds.has(problemId)) state.selected.delete(problemId);
@@ -238,7 +241,7 @@ async function loadPackageStatuses() {
       problem.packageStatus = 'ERROR';
       errors += 1;
     }
-    if (isEligibleProblem(problem) && !problem.modified && state.selectNewEligible) {
+    if (isEligibleProblem(problem) && state.selectNewEligible) {
       state.selected.add(String(problem.id));
     } else if (!isEligibleProblem(problem)) {
       state.selected.delete(String(problem.id));
@@ -261,7 +264,7 @@ function setProblemList(problems, storeHits = 0) {
   state.packageStatusLoading = state.problems.some((problem) => problem.packageStatus === 'LOADING');
   state.selectNewEligible = true;
   state.selected = new Set(state.problems
-    .filter((problem) => isEligibleProblem(problem) && !problem.modified)
+    .filter(isEligibleProblem)
     .map((problem) => String(problem.id)));
 }
 
@@ -334,7 +337,7 @@ elements.problemsBody.addEventListener('change', (event) => {
 elements.selectAll.addEventListener('click', () => {
   state.selectNewEligible = true;
   for (const problem of state.problems) {
-    if (isEligibleProblem(problem) && !problem.modified) state.selected.add(String(problem.id));
+    if (isEligibleProblem(problem)) state.selected.add(String(problem.id));
   }
   renderProblems();
 });
@@ -408,6 +411,7 @@ elements.buildButton.addEventListener('click', async () => {
 function stateLabel(itemState) {
   return ({
     QUEUED: 'Đang chờ',
+    COMMITTING: 'Đang commit',
     SUBMITTING: 'Đang gửi',
     PENDING: 'Trong hàng đợi',
     RUNNING: 'Đang build',
@@ -435,8 +439,13 @@ function renderJob(job) {
 
   if (done) {
     for (const item of job.items) {
+      const problem = state.problems.find((candidate) => String(candidate.id) === String(item.problem.id));
+      if (problem) {
+        problem.revision = item.problem.revision;
+        problem.workingCopyRevision = item.problem.workingCopyRevision;
+        problem.modified = Boolean(item.problem.modified);
+      }
       if (item.state === 'READY' || item.state === 'SKIPPED') {
-        const problem = state.problems.find((candidate) => String(candidate.id) === String(item.problem.id));
         if (problem) {
           problem.latestPackage = problem.revision;
           problem.packageStatus = 'FULL';
@@ -452,10 +461,11 @@ function renderJob(job) {
 
   elements.progressBody.innerHTML = job.items.map((item) => {
     const cssState = item.state.toLowerCase();
+    const detailText = [item.commitComment, item.packageComment].filter(Boolean).join(' · ');
     const detail = item.error
       ? `<span class="detail-error">${escapeHtml(item.error)}</span>`
-      : item.packageComment
-        ? `<span class="detail-muted">${escapeHtml(item.packageComment)}</span>`
+      : detailText
+        ? `<span class="detail-muted">${escapeHtml(detailText)}</span>`
         : '<span class="detail-muted">—</span>';
     return `
       <tr>

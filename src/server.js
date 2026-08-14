@@ -17,8 +17,12 @@ const PORT = Number(process.env.PORT) || 4173;
 const PUBLIC_DIR = fileURLToPath(new URL('../public/', import.meta.url));
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 const BODY_LIMIT_BYTES = 32 * 1024;
-const APP_VERSION = '1.2.0';
-const APP_CAPABILITIES = ['full-package-history-filter-v1', 'local-package-status-store-v1'];
+const APP_VERSION = '1.3.0';
+const APP_CAPABILITIES = [
+  'full-package-history-filter-v1',
+  'local-package-status-store-v1',
+  'auto-commit-before-build-v1',
+];
 
 const sessions = new Map();
 const jobManager = new JobManager();
@@ -80,6 +84,7 @@ function getSession(sessionId) {
 export function resolveInitialPackageStatus(problem, storedStatuses) {
   const storedStatus = storedStatuses.get(String(problem.id));
   if (storedStatus) return storedStatus;
+  if (problem.modified) return 'UNBUILT';
   if (problem.latestPackage === undefined || problem.latestPackage === null) return 'UNBUILT';
   return 'LOADING';
 }
@@ -270,11 +275,6 @@ async function createBuildJob(request, response, sessionId) {
     sendError(response, 403, 'Danh sách có problem không thuộc quyền OWNER của phiên này.');
     return;
   }
-  if (selectedProblems.some((problem) => problem.modified)) {
-    sendError(response, 409, 'Có problem chưa commit thay đổi. Hãy commit trên Polygon rồi kết nối lại.');
-    return;
-  }
-
   const job = jobManager.createJob({
     client: session.client,
     problems: selectedProblems,
@@ -283,9 +283,12 @@ async function createBuildJob(request, response, sessionId) {
     destroyClientOnFinish: false,
     onFinished: async (finishedJob) => {
       for (const item of finishedJob.items) {
-        if (item.state !== 'READY' && item.state !== 'SKIPPED') continue;
         const problem = session.problems.find((candidate) => String(candidate.id) === String(item.problem.id));
         if (!problem) continue;
+        problem.revision = item.problem.revision;
+        problem.workingCopyRevision = item.problem.workingCopyRevision;
+        problem.modified = Boolean(item.problem.modified);
+        if (item.state !== 'READY' && item.state !== 'SKIPPED') continue;
         problem.latestPackage = problem.revision;
         session.packageStatuses.set(String(problem.id), 'FULL');
         session.storedPackageStatusIds.add(String(problem.id));

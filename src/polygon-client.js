@@ -207,8 +207,21 @@ export class PolygonClient {
     }
   }
 
-  listProblems() {
-    return this.call('problems.list', { showDeleted: false });
+  listProblems({ id } = {}) {
+    return this.call('problems.list', { showDeleted: false, id });
+  }
+
+  async getProblem(problemId) {
+    const problems = await this.listProblems({ id: problemId });
+    return problems.find((problem) => String(problem.id) === String(problemId)) || null;
+  }
+
+  commitChanges(problemId) {
+    return this.call('problem.commitChanges', {
+      problemId,
+      minorChanges: true,
+      message: '',
+    });
   }
 
   buildFullPackage(problemId, { verify = false } = {}) {

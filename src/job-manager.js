@@ -13,6 +13,7 @@ function publicProblem(problem) {
     name: problem.name,
     owner: problem.owner,
     revision: problem.revision,
+    workingCopyRevision: problem.workingCopyRevision,
     modified: Boolean(problem.modified),
     latestPackage: problem.latestPackage,
   };
@@ -64,6 +65,9 @@ export class JobManager {
         packageId: null,
         packageType: null,
         packageComment: '',
+        commitAttempted: false,
+        committed: false,
+        commitComment: '',
         startedAt: null,
         finishedAt: null,
         error: null,
@@ -166,10 +170,12 @@ export class JobManager {
   }
 
   async #buildOne(job, item) {
-    item.state = 'SUBMITTING';
+    item.state = item.problem.modified ? 'COMMITTING' : 'SUBMITTING';
     item.startedAt = new Date(this.now()).toISOString();
 
     try {
+      await this.#commitBeforeBuild(job, item);
+      item.state = 'SUBMITTING';
       const buildRequestedAtSeconds = Math.floor(this.now() / 1_000);
       let createdPackage;
 
@@ -226,6 +232,39 @@ export class JobManager {
     } finally {
       item.finishedAt = new Date(this.now()).toISOString();
     }
+  }
+
+  async #commitBeforeBuild(job, item) {
+    if (!item.problem.modified) return;
+
+    item.commitAttempted = true;
+    const result = await job.client.commitChanges(item.problem.id);
+    if (result?.conflictOccurred) {
+      throw new Error(result.message || 'Polygon báo xung đột khi commit working copy.');
+    }
+
+    item.committed = Boolean(result?.committed);
+    item.commitComment = item.committed
+      ? 'Đã tự commit thay đổi với nội dung trống.'
+      : (result?.message || 'Polygon xác nhận không còn thay đổi cần commit.');
+
+    if (item.problem.workingCopyRevision !== undefined && item.problem.workingCopyRevision !== null) {
+      item.problem.revision = item.problem.workingCopyRevision;
+      item.problem.modified = false;
+      return;
+    }
+
+    const refreshedProblem = await job.client.getProblem(item.problem.id);
+    if (!refreshedProblem) {
+      throw new Error('Đã commit nhưng không đọc lại được revision mới từ Polygon.');
+    }
+    if (refreshedProblem.modified) {
+      throw new Error('Polygon vẫn báo working copy chưa commit sau khi gọi commitChanges.');
+    }
+    item.problem.revision = refreshedProblem.revision;
+    item.problem.workingCopyRevision = refreshedProblem.workingCopyRevision;
+    item.problem.latestPackage = refreshedProblem.latestPackage;
+    item.problem.modified = false;
   }
 
   #normalizeBuildResult(buildResult) {

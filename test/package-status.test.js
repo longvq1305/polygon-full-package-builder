@@ -35,12 +35,13 @@ test('problem không có package READY được phân loại là chưa build', (
   ]), 'UNBUILT');
 });
 
-test('giao diện chỉ giữ problem chưa build hoặc Standard', () => {
+test('giao diện giữ problem chưa build, Standard hoặc có working copy chưa commit', () => {
   assert.equal(isEligibleProblem({ packageStatus: 'UNBUILT' }), true);
   assert.equal(isEligibleProblem({ packageStatus: 'STANDARD' }), true);
   assert.equal(isEligibleProblem({ packageStatus: 'FULL' }), false);
   assert.equal(isEligibleProblem({ packageStatus: 'LOADING' }), false);
   assert.equal(isEligibleProblem({ packageStatus: 'ERROR' }), false);
+  assert.equal(isEligibleProblem({ packageStatus: 'FULL', modified: true }), true);
 });
 
 test('giao diện từ chối backend cũ chưa có bộ lọc lịch sử', () => {
@@ -48,6 +49,10 @@ test('giao diện từ chối backend cũ chưa có bộ lọc lịch sử', () 
   assert.equal(supportsPackageHistoryFilter({
     ok: true,
     capabilities: ['full-package-history-filter-v1'],
+  }), false);
+  assert.equal(supportsPackageHistoryFilter({
+    ok: true,
+    capabilities: ['full-package-history-filter-v1', 'auto-commit-before-build-v1'],
   }), true);
 });
 
@@ -56,4 +61,5 @@ test('trạng thái FULL đã lưu được ưu tiên và không bị kiểm tra
   assert.equal(resolveInitialPackageStatus({ id: 42 }, statuses), 'FULL');
   assert.equal(resolveInitialPackageStatus({ id: 43 }, statuses), 'UNBUILT');
   assert.equal(resolveInitialPackageStatus({ id: 44, latestPackage: 9 }, statuses), 'LOADING');
+  assert.equal(resolveInitialPackageStatus({ id: 45, latestPackage: 9, modified: true }, statuses), 'UNBUILT');
 });

@@ -124,7 +124,7 @@ tbody tr:hover { background: #faf9f4; }
 .status-pill { display: inline-flex; align-items: center; padding: 5px 9px; border-radius: 999px; background: #ebeae4; color: #5f665f; font-size: 11px; font-weight: 800; letter-spacing: .03em; }
 .status-pill.modified, .status-pill.failed { background: var(--red-soft); color: var(--red); }
 .status-pill.ready { background: var(--green-soft); color: var(--green); }
-.status-pill.running, .status-pill.pending, .status-pill.submitting { background: #f5e8c8; color: #7c5a10; }
+.status-pill.running, .status-pill.pending, .status-pill.submitting, .status-pill.committing { background: #f5e8c8; color: #7c5a10; }
 .status-pill.cancelled { background: #ecebea; color: #656565; }
 .status-pill.skipped { background: #dfe9ee; color: #315c70; }
 .status-pill.package-full { background: var(--green-soft); color: var(--green); }

@@ -65,6 +65,65 @@ test('JobManager gọi onFinished sau khi job có kết quả cuối', async () 
   assert.equal(finishedJob.items[0].state, 'READY');
 });
 
+test('JobManager commit problem đã sửa trước rồi mới build', async () => {
+  const calls = [];
+  const client = {
+    async commitChanges(problemId) {
+      calls.push(`commit:${problemId}`);
+      return { committed: true, conflictOccurred: false, message: '' };
+    },
+    async buildFullPackage(problemId) {
+      calls.push(`build:${problemId}`);
+      return { id: 210, revision: 8, state: 'READY', type: 'windows' };
+    },
+    destroy() {},
+  };
+  const manager = new JobManager();
+  const modifiedProblem = {
+    ...problem(21),
+    modified: true,
+    revision: 7,
+    workingCopyRevision: 8,
+  };
+  const created = manager.createJob({ client, problems: [modifiedProblem] });
+
+  await waitUntil(() => manager.getJob(created.id).finishedAt !== null);
+  const job = manager.getJob(created.id);
+  assert.deepEqual(calls, ['commit:21', 'build:21']);
+  assert.equal(job.state, 'COMPLETED');
+  assert.equal(job.items[0].commitAttempted, true);
+  assert.equal(job.items[0].committed, true);
+  assert.equal(job.items[0].commitComment, 'Đã tự commit thay đổi với nội dung trống.');
+  assert.equal(job.items[0].problem.modified, false);
+  assert.equal(job.items[0].problem.revision, 8);
+});
+
+test('JobManager không build nếu commit working copy bị xung đột', async () => {
+  let buildCalls = 0;
+  const client = {
+    async commitChanges() {
+      return { committed: false, conflictOccurred: true, message: 'Working copy conflict' };
+    },
+    async buildFullPackage() {
+      buildCalls += 1;
+      return { id: 211, state: 'READY', type: 'windows' };
+    },
+    destroy() {},
+  };
+  const manager = new JobManager();
+  const created = manager.createJob({
+    client,
+    problems: [{ ...problem(22), modified: true, workingCopyRevision: 8 }],
+  });
+
+  await waitUntil(() => manager.getJob(created.id).finishedAt !== null);
+  const job = manager.getJob(created.id);
+  assert.equal(buildCalls, 0);
+  assert.equal(job.state, 'COMPLETED_WITH_ERRORS');
+  assert.equal(job.items[0].state, 'FAILED');
+  assert.equal(job.items[0].error, 'Working copy conflict');
+});
+
 test('JobManager xác nhận full package đã tồn tại chỉ bằng một request build', async () => {
   let apiCalls = 0;
   const client = {
