@@ -46,6 +46,8 @@ const state = {
   credentialsSaved: false,
   jobActive: false,
   packageStatusLoadToken: 0,
+  packageStatusLoading: false,
+  selectNewEligible: true,
 };
 
 const terminalJobStates = new Set(['COMPLETED', 'COMPLETED_WITH_ERRORS', 'CANCELLED']);
@@ -95,9 +97,25 @@ function packageStatusBadge(status) {
   return `<span class="status-pill ${details[1]}">${details[0]}</span>`;
 }
 
+function isEligibleProblem(problem) {
+  return problem.packageStatus === 'UNBUILT' || problem.packageStatus === 'STANDARD';
+}
+
+function updateProblemSummary() {
+  const eligible = state.problems.filter(isEligibleProblem);
+  const unbuilt = eligible.filter((problem) => problem.packageStatus === 'UNBUILT').length;
+  const standard = eligible.filter((problem) => problem.packageStatus === 'STANDARD').length;
+  const modified = eligible.filter((problem) => problem.modified).length;
+  const suffix = modified ? `; ${modified} problem chưa commit không thể chọn.` : '.';
+  elements.problemSummary.textContent = state.packageStatusLoading
+    ? `Tạm thời có ${eligible.length} problem chưa có full package; danh sách đang tiếp tục cập nhật${suffix}`
+    : `Có ${eligible.length} problem chưa có full package: ${unbuilt} chưa build, ${standard} Standard${suffix}`;
+}
+
 function renderProblems() {
   const filter = elements.problemFilter.value.trim().toLocaleLowerCase('vi');
-  const visible = state.problems.filter((problem) => {
+  const eligible = state.problems.filter(isEligibleProblem);
+  const visible = eligible.filter((problem) => {
     return !filter || problem.name.toLocaleLowerCase('vi').includes(filter) || String(problem.id).includes(filter);
   });
 
@@ -119,14 +137,28 @@ function renderProblems() {
       </tr>`;
   }).join('');
 
+  elements.emptyFilter.textContent = eligible.length
+    ? 'Không có problem khớp từ khóa.'
+    : state.packageStatusLoading
+      ? 'Đang kiểm tra các problem đã có package…'
+      : 'Không có problem nào cần build full package.';
   elements.emptyFilter.hidden = visible.length > 0;
+  updateProblemSummary();
   updateSelectedCount();
 }
 
 function updateSelectedCount() {
+  const selectableIds = new Set(state.problems
+    .filter((problem) => isEligibleProblem(problem) && !problem.modified)
+    .map((problem) => String(problem.id)));
+  for (const problemId of state.selected) {
+    if (!selectableIds.has(problemId)) state.selected.delete(problemId);
+  }
   const count = state.selected.size;
-  elements.selectedCount.textContent = `${count} problem đã chọn`;
-  elements.buildButton.disabled = count === 0;
+  elements.selectedCount.textContent = state.packageStatusLoading
+    ? `${count} problem đã chọn · đang hoàn tất kiểm tra package`
+    : `${count} problem đã chọn`;
+  elements.buildButton.disabled = count === 0 || state.packageStatusLoading;
 }
 
 function updateSavedCredentialUi(saved) {
@@ -138,6 +170,7 @@ function resetToCredentials({ closeSession = true } = {}) {
   clearTimeout(state.pollTimer);
   state.packageStatusLoadToken += 1;
   state.jobActive = false;
+  state.packageStatusLoading = false;
   if (closeSession && state.sessionId) {
     void fetch(`/api/sessions/${encodeURIComponent(state.sessionId)}`, { method: 'DELETE' });
   }
@@ -173,6 +206,7 @@ async function loadPackageStatuses() {
   const sessionId = state.sessionId;
   const token = ++state.packageStatusLoadToken;
   const problems = state.problems.filter((problem) => problem.packageStatus === 'LOADING');
+  state.packageStatusLoading = problems.length > 0;
   let completed = 0;
   let errors = 0;
   updatePackageStatusProgress({ completed, total: problems.length });
@@ -195,11 +229,18 @@ async function loadPackageStatuses() {
       problem.packageStatus = 'ERROR';
       errors += 1;
     }
+    if (isEligibleProblem(problem) && !problem.modified && state.selectNewEligible) {
+      state.selected.add(String(problem.id));
+    } else if (!isEligibleProblem(problem)) {
+      state.selected.delete(String(problem.id));
+    }
     completed += 1;
     renderProblems();
     updatePackageStatusProgress({ completed, total: problems.length, errors });
     await wait(0);
   }
+  state.packageStatusLoading = false;
+  renderProblems();
 }
 
 function applySessionResult(result) {
@@ -209,14 +250,14 @@ function applySessionResult(result) {
     ...problem,
     packageStatus: problem.packageStatus || 'UNBUILT',
   }));
-  state.selected = new Set(result.problems.filter((problem) => !problem.modified).map((problem) => String(problem.id)));
+  state.packageStatusLoading = state.problems.some((problem) => problem.packageStatus === 'LOADING');
+  state.selectNewEligible = true;
+  state.selected = new Set(state.problems
+    .filter((problem) => isEligibleProblem(problem) && !problem.modified)
+    .map((problem) => String(problem.id)));
   updateSavedCredentialUi(result.credentialsSaved);
   elements.apiKey.value = '';
   elements.secretKey.value = '';
-  const modifiedCount = result.problems.filter((problem) => problem.modified).length;
-  elements.problemSummary.textContent = result.problems.length
-    ? `Tìm thấy ${result.problems.length} problem bạn sở hữu. Đã chọn ${result.problems.length - modifiedCount} problem sẵn sàng${modifiedCount ? `; ${modifiedCount} problem chưa commit được bỏ qua.` : '.'}`
-    : 'Không tìm thấy problem nào có quyền OWNER.';
   elements.credentialsPanel.hidden = true;
   elements.problemsPanel.hidden = false;
   elements.progressPanel.hidden = true;
@@ -277,12 +318,14 @@ elements.problemsBody.addEventListener('change', (event) => {
 });
 
 elements.selectAll.addEventListener('click', () => {
+  state.selectNewEligible = true;
   for (const problem of state.problems) {
-    if (!problem.modified) state.selected.add(String(problem.id));
+    if (isEligibleProblem(problem) && !problem.modified) state.selected.add(String(problem.id));
   }
   renderProblems();
 });
 elements.clearAll.addEventListener('click', () => {
+  state.selectNewEligible = false;
   state.selected.clear();
   renderProblems();
 });

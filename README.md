@@ -10,7 +10,7 @@ Web tool chạy cục bộ để:
 - tự bỏ qua revision đã có full package và problem đang có thay đổi chưa commit.
 - tự điều tiết request và chờ/thử lại khi Polygon trả HTTP 429.
 - tùy chọn ghi nhớ credential bằng Windows DPAPI để dùng lại sau khi restart và giữa nhiều job.
-- hiển thị package gần nhất của từng problem là **Chưa build**, **Standard** hay **Full package**.
+- danh sách chỉ hiển thị problem **Chưa build** hoặc mới có package **Standard**; problem đã có **Full package** được ẩn.
 
 ## Yêu cầu
 
