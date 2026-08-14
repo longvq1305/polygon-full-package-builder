@@ -132,7 +132,7 @@ async function createSavedSession(response) {
   }
 }
 
-function classifyPackageStatus(problem, packages) {
+export function classifyPackageStatus(problem, packages) {
   if (problem.latestPackage === undefined || problem.latestPackage === null) return 'UNBUILT';
 
   const readyPackages = packages.filter((packageInfo) => packageInfo.state === 'READY');

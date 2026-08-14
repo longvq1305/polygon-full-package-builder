@@ -1,3 +1,5 @@
+import { isEligibleProblem } from './package-status.js';
+
 const elements = {
   alert: document.querySelector('#alert'),
   credentialsPanel: document.querySelector('#credentials-panel'),
@@ -95,10 +97,6 @@ function packageStatusBadge(status) {
     ERROR: ['Không đọc được', 'package-error'],
   }[status] || ['Chưa build', 'package-unbuilt'];
   return `<span class="status-pill ${details[1]}">${details[0]}</span>`;
-}
-
-function isEligibleProblem(problem) {
-  return problem.packageStatus === 'UNBUILT' || problem.packageStatus === 'STANDARD';
 }
 
 function updateProblemSummary() {
