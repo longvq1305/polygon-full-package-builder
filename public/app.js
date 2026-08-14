@@ -12,6 +12,7 @@ const elements = {
   forgetSavedCredentials: document.querySelector('#forget-saved-credentials'),
   problemsPanel: document.querySelector('#problems-panel'),
   problemSummary: document.querySelector('#problem-summary'),
+  packageStatusProgress: document.querySelector('#package-status-progress'),
   problemFilter: document.querySelector('#problem-filter'),
   problemsBody: document.querySelector('#problems-body'),
   emptyFilter: document.querySelector('#empty-filter'),
@@ -43,6 +44,8 @@ const state = {
   jobId: null,
   pollTimer: null,
   credentialsSaved: false,
+  jobActive: false,
+  packageStatusLoadToken: 0,
 };
 
 const terminalJobStates = new Set(['COMPLETED', 'COMPLETED_WITH_ERRORS', 'CANCELLED']);
@@ -79,6 +82,19 @@ function setButtonLoading(button, loading, label) {
   button.innerHTML = loading ? label : button.dataset.original;
 }
 
+const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+function packageStatusBadge(status) {
+  const details = {
+    UNBUILT: ['Chưa build', 'package-unbuilt'],
+    STANDARD: ['Standard', 'package-standard'],
+    FULL: ['Full package', 'package-full'],
+    LOADING: ['Đang kiểm tra…', 'package-loading'],
+    ERROR: ['Không đọc được', 'package-error'],
+  }[status] || ['Chưa build', 'package-unbuilt'];
+  return `<span class="status-pill ${details[1]}">${details[0]}</span>`;
+}
+
 function renderProblems() {
   const filter = elements.problemFilter.value.trim().toLocaleLowerCase('vi');
   const visible = state.problems.filter((problem) => {
@@ -86,7 +102,7 @@ function renderProblems() {
   });
 
   elements.problemsBody.innerHTML = visible.map((problem) => {
-    const status = problem.modified
+    const workingCopyStatus = problem.modified
       ? '<span class="status-pill modified">Chưa commit</span>'
       : '<span class="status-pill ready">Sẵn sàng</span>';
     const latestPackage = problem.latestPackage ?? '—';
@@ -98,7 +114,8 @@ function renderProblems() {
         <td><span class="problem-name">${escapeHtml(problem.name)}</span><span class="problem-id">ID ${escapeHtml(problem.id)} · ${escapeHtml(problem.owner)}</span></td>
         <td>${escapeHtml(problem.revision ?? '—')}</td>
         <td>${escapeHtml(latestPackage)}</td>
-        <td>${status}</td>
+        <td>${packageStatusBadge(problem.packageStatus)}</td>
+        <td>${workingCopyStatus}</td>
       </tr>`;
   }).join('');
 
@@ -119,6 +136,8 @@ function updateSavedCredentialUi(saved) {
 
 function resetToCredentials({ closeSession = true } = {}) {
   clearTimeout(state.pollTimer);
+  state.packageStatusLoadToken += 1;
+  state.jobActive = false;
   if (closeSession && state.sessionId) {
     void fetch(`/api/sessions/${encodeURIComponent(state.sessionId)}`, { method: 'DELETE' });
   }
@@ -134,9 +153,62 @@ function resetToCredentials({ closeSession = true } = {}) {
   setAlert('');
 }
 
+function updatePackageStatusProgress({ completed, total, errors = 0 }) {
+  if (total === 0) {
+    elements.packageStatusProgress.textContent = 'Các problem trong danh sách chưa có package.';
+    return;
+  }
+  if (completed < total) {
+    elements.packageStatusProgress.textContent = state.jobActive
+      ? `Đã kiểm tra ${completed}/${total} trạng thái package; tạm dừng trong khi build.`
+      : `Đang kiểm tra loại package ${completed}/${total}; request được xếp hàng để tránh HTTP 429.`;
+    return;
+  }
+  elements.packageStatusProgress.textContent = errors
+    ? `Đã kiểm tra xong; ${errors} problem không đọc được trạng thái package.`
+    : `Đã cập nhật trạng thái package cho ${total} problem.`;
+}
+
+async function loadPackageStatuses() {
+  const sessionId = state.sessionId;
+  const token = ++state.packageStatusLoadToken;
+  const problems = state.problems.filter((problem) => problem.packageStatus === 'LOADING');
+  let completed = 0;
+  let errors = 0;
+  updatePackageStatusProgress({ completed, total: problems.length });
+
+  for (const problem of problems) {
+    while (state.jobActive && token === state.packageStatusLoadToken) {
+      updatePackageStatusProgress({ completed, total: problems.length, errors });
+      await wait(500);
+    }
+    if (token !== state.packageStatusLoadToken || sessionId !== state.sessionId) return;
+
+    try {
+      const result = await api(
+        `/api/sessions/${encodeURIComponent(sessionId)}/problems/${encodeURIComponent(problem.id)}/package-status`,
+      );
+      if (token !== state.packageStatusLoadToken || sessionId !== state.sessionId) return;
+      problem.packageStatus = result.status;
+    } catch {
+      if (token !== state.packageStatusLoadToken || sessionId !== state.sessionId) return;
+      problem.packageStatus = 'ERROR';
+      errors += 1;
+    }
+    completed += 1;
+    renderProblems();
+    updatePackageStatusProgress({ completed, total: problems.length, errors });
+    await wait(0);
+  }
+}
+
 function applySessionResult(result) {
+  state.packageStatusLoadToken += 1;
   state.sessionId = result.sessionId;
-  state.problems = result.problems;
+  state.problems = result.problems.map((problem) => ({
+    ...problem,
+    packageStatus: problem.packageStatus || 'UNBUILT',
+  }));
   state.selected = new Set(result.problems.filter((problem) => !problem.modified).map((problem) => String(problem.id)));
   updateSavedCredentialUi(result.credentialsSaved);
   elements.apiKey.value = '';
@@ -149,6 +221,7 @@ function applySessionResult(result) {
   elements.problemsPanel.hidden = false;
   elements.progressPanel.hidden = true;
   renderProblems();
+  void loadPackageStatuses();
 }
 
 async function connectWithSavedCredentials({ automatic = false } = {}) {
@@ -227,6 +300,7 @@ elements.forgetSavedCredentials.addEventListener('click', async () => {
 
 elements.buildButton.addEventListener('click', async () => {
   if (!state.sessionId || state.selected.size === 0) return;
+  state.jobActive = true;
   setAlert('');
   setButtonLoading(elements.buildButton, true, 'Đang tạo job…');
   try {
@@ -245,6 +319,7 @@ elements.buildButton.addEventListener('click', async () => {
     elements.progressPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
     schedulePoll();
   } catch (error) {
+    state.jobActive = false;
     setAlert(error.message);
   } finally {
     setButtonLoading(elements.buildButton, false);
@@ -269,6 +344,7 @@ function renderJob(job) {
   const running = counts.total - counts.completed;
   const percent = counts.total ? Math.round((counts.completed / counts.total) * 100) : 0;
   const done = terminalJobStates.has(job.state);
+  state.jobActive = !done;
 
   elements.progressBar.style.width = `${percent}%`;
   elements.statTotal.textContent = counts.total;
@@ -282,7 +358,10 @@ function renderJob(job) {
     for (const item of job.items) {
       if (item.state === 'READY' || item.state === 'SKIPPED') {
         const problem = state.problems.find((candidate) => String(candidate.id) === String(item.problem.id));
-        if (problem) problem.latestPackage = problem.revision;
+        if (problem) {
+          problem.latestPackage = problem.revision;
+          problem.packageStatus = 'FULL';
+        }
       }
     }
     elements.jobTitle.textContent = job.state === 'COMPLETED' ? 'Build đã hoàn tất' : 'Job đã kết thúc';
@@ -341,6 +420,7 @@ elements.cancelButton.addEventListener('click', async () => {
 elements.newJobButton.addEventListener('click', () => {
   clearTimeout(state.pollTimer);
   state.jobId = null;
+  state.jobActive = false;
   elements.progressPanel.hidden = true;
   elements.problemsPanel.hidden = false;
   elements.cancelButton.disabled = false;

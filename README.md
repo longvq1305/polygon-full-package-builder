@@ -10,6 +10,7 @@ Web tool chạy cục bộ để:
 - tự bỏ qua revision đã có full package và problem đang có thay đổi chưa commit.
 - tự điều tiết request và chờ/thử lại khi Polygon trả HTTP 429.
 - tùy chọn ghi nhớ credential bằng Windows DPAPI để dùng lại sau khi restart và giữa nhiều job.
+- hiển thị package gần nhất của từng problem là **Chưa build**, **Standard** hay **Full package**.
 
 ## Yêu cầu
 
@@ -60,6 +61,7 @@ npm start
 - Revision đã có full package `READY` được đánh dấu **Đã có package**, không bị báo lỗi và không tạo bản trùng.
 - Problem có working copy chưa commit được hiển thị nhưng không được chọn; hãy commit trên Polygon rồi kết nối lại.
 - Request được tuần tự hóa, mặc định cách nhau ít nhất 5 giây. Sau HTTP 429, khoảng cách tăng ít nhất 10 giây và tool tự backoff tối đa 8 lần.
+- Loại package được đọc tuần tự trong nền và tạm dừng khi job build chạy để không chiếm hàng đợi request.
 
 ## Kiểm thử
 
@@ -77,6 +79,7 @@ Các test dùng Polygon client giả, không gọi API thật và không cần c
 | `POST` | `/api/sessions` | Xác thực và lấy danh sách problem OWNER |
 | `POST` | `/api/sessions/saved` | Mở phiên bằng credential DPAPI đã lưu |
 | `DELETE` | `/api/sessions/:id` | Đóng phiên/client đang giữ trong RAM |
+| `GET` | `/api/sessions/:id/problems/:problemId/package-status` | Đọc loại package gần nhất của một problem |
 | `GET` | `/api/credentials/status` | Kiểm tra có credential đã lưu hay chưa |
 | `DELETE` | `/api/credentials` | Xóa credential DPAPI đã lưu |
 | `POST` | `/api/sessions/:id/build` | Tạo job build cho danh sách đã chọn |

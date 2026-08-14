@@ -107,6 +107,7 @@ async function openSession({ apiKey, secretKey, remember = false }, response) {
       revision,
       workingCopyRevision,
       latestPackage,
+      packageStatus: latestPackage === undefined || latestPackage === null ? 'UNBUILT' : 'LOADING',
       modified: Boolean(modified),
     })),
   });
@@ -129,6 +130,53 @@ async function createSavedSession(response) {
     credentials.apiKey = '';
     credentials.secretKey = '';
   }
+}
+
+function classifyPackageStatus(problem, packages) {
+  if (problem.latestPackage === undefined || problem.latestPackage === null) return 'UNBUILT';
+
+  const readyPackages = packages.filter((packageInfo) => packageInfo.state === 'READY');
+  if (readyPackages.length === 0) return 'UNBUILT';
+  const latestRevision = readyPackages.reduce((latest, packageInfo) => {
+    return Number(packageInfo.revision) > Number(latest) ? packageInfo.revision : latest;
+  }, readyPackages[0].revision);
+  const latestPackages = readyPackages.filter((packageInfo) => {
+    return String(packageInfo.revision) === String(latestRevision);
+  });
+
+  if (latestPackages.some((packageInfo) => {
+    return ['linux', 'windows', 'full'].includes(String(packageInfo.type).toLowerCase());
+  })) {
+    return 'FULL';
+  }
+  if (latestPackages.some((packageInfo) => String(packageInfo.type).toLowerCase() === 'standard')) {
+    return 'STANDARD';
+  }
+  return 'UNBUILT';
+}
+
+async function getProblemPackageStatus(response, sessionId, problemId) {
+  const session = getSession(sessionId);
+  if (!session) {
+    sendError(response, 401, 'Phiên đã hết hạn. Vui lòng kết nối lại.');
+    return;
+  }
+
+  const problem = session.problems.find((candidate) => String(candidate.id) === String(problemId));
+  if (!problem) {
+    sendError(response, 404, 'Không tìm thấy problem thuộc quyền OWNER trong phiên này.');
+    return;
+  }
+  if (problem.latestPackage === undefined || problem.latestPackage === null) {
+    sendJson(response, 200, { problemId: problem.id, status: 'UNBUILT' });
+    return;
+  }
+
+  const packages = await session.client.listPackages(problem.id);
+  sendJson(response, 200, {
+    problemId: problem.id,
+    status: classifyPackageStatus(problem, packages),
+  });
 }
 
 async function createBuildJob(request, response, sessionId) {
@@ -233,6 +281,12 @@ async function handleRequest(request, response) {
     const buildMatch = path.match(/^\/api\/sessions\/([^/]+)\/build$/);
     if (request.method === 'POST' && buildMatch) {
       await createBuildJob(request, response, buildMatch[1]);
+      return;
+    }
+
+    const packageStatusMatch = path.match(/^\/api\/sessions\/([^/]+)\/problems\/([^/]+)\/package-status$/);
+    if (request.method === 'GET' && packageStatusMatch) {
+      await getProblemPackageStatus(response, packageStatusMatch[1], packageStatusMatch[2]);
       return;
     }
 
