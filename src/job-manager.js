@@ -24,7 +24,7 @@ function errorMessage(error) {
 
 export class JobManager {
   constructor({
-    pollIntervalMs = 10_000,
+    pollIntervalMs = 30_000,
     packageTimeoutMs = 4 * 60 * 60 * 1_000,
     sleepImpl = sleep,
     now = () => Date.now(),
@@ -36,7 +36,7 @@ export class JobManager {
     this.now = now;
   }
 
-  createJob({ client, problems, verify = false, concurrency = 2 }) {
+  createJob({ client, problems, verify = false, concurrency = 1, destroyClientOnFinish = true }) {
     const safeConcurrency = Math.max(1, Math.min(4, Number(concurrency) || 2));
     const id = randomUUID();
     const createdAt = new Date(this.now()).toISOString();
@@ -49,6 +49,7 @@ export class JobManager {
       finishedAt: null,
       cancelRequested: false,
       client,
+      destroyClientOnFinish,
       items: problems.map((problem) => ({
         problem: publicProblem(problem),
         state: 'QUEUED',
@@ -144,7 +145,7 @@ export class JobManager {
       const hasCancellation = job.items.some((item) => item.state === 'CANCELLED');
       job.state = hasFailure ? 'COMPLETED_WITH_ERRORS' : hasCancellation ? 'CANCELLED' : 'COMPLETED';
       job.finishedAt = new Date(this.now()).toISOString();
-      job.client.destroy();
+      if (job.destroyClientOnFinish) job.client.destroy();
       job.client = null;
     }
   }
@@ -154,8 +155,7 @@ export class JobManager {
     item.startedAt = new Date(this.now()).toISOString();
 
     try {
-      const packagesBeforeBuild = await job.client.listPackages(item.problem.id);
-      const knownPackageIds = new Set(packagesBeforeBuild.map((candidate) => String(candidate.id)));
+      const buildRequestedAtSeconds = Math.floor(this.now() / 1_000);
       let createdPackage;
 
       try {
@@ -165,6 +165,12 @@ export class JobManager {
         createdPackage = this.#normalizeBuildResult(buildResult);
       } catch (error) {
         if (!DUPLICATE_FULL_PACKAGE_PATTERN.test(errorMessage(error))) throw error;
+
+        if (String(item.problem.latestPackage) === String(item.problem.revision)) {
+          item.state = 'SKIPPED';
+          item.packageComment = 'Polygon xác nhận revision này đã có full package; không tạo bản trùng.';
+          return;
+        }
 
         const packages = await job.client.listPackages(item.problem.id);
         const existingPackage = this.#latestUsablePackage(packages, item.problem.revision);
@@ -187,7 +193,7 @@ export class JobManager {
 
       if (!createdPackage) {
         item.state = 'PENDING';
-        createdPackage = await this.#discoverNewPackage(job, item, knownPackageIds);
+        createdPackage = await this.#discoverNewPackage(job, item, buildRequestedAtSeconds);
       }
 
       this.#applyPackage(item, createdPackage);
@@ -240,7 +246,7 @@ export class JobManager {
     item.state = packageInfo.state || 'PENDING';
   }
 
-  async #discoverNewPackage(job, item, knownPackageIds) {
+  async #discoverNewPackage(job, item, buildRequestedAtSeconds) {
     const deadline = this.now() + Math.min(PACKAGE_DISCOVERY_TIMEOUT_MS, this.packageTimeoutMs);
     let consecutivePollErrors = 0;
 
@@ -252,8 +258,10 @@ export class JobManager {
       try {
         const packages = await job.client.listPackages(item.problem.id);
         consecutivePollErrors = 0;
-        const newPackages = packages.filter((candidate) => !knownPackageIds.has(String(candidate.id)));
-        const discovered = this.#latestPackage(newPackages, item.problem.revision);
+        const recentPackages = packages.filter((candidate) => {
+          return (Number(candidate.creationTimeSeconds) || 0) >= buildRequestedAtSeconds - 5;
+        });
+        const discovered = this.#latestPackage(recentPackages, item.problem.revision);
         if (discovered) return discovered;
       } catch (error) {
         consecutivePollErrors += 1;

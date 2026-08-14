@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createSignedParameters, PolygonApiError, PolygonClient } from '../src/polygon-client.js';
+import {
+  createSignedParameters,
+  PolygonApiError,
+  PolygonClient,
+  PolygonRequestScheduler,
+} from '../src/polygon-client.js';
 
 test('createSignedParameters sắp xếp tham số và tạo chữ ký ổn định', () => {
   const body = createSignedParameters({
@@ -87,7 +92,7 @@ test('PolygonClient chờ Retry-After và tự thử lại HTTP 429 không phả
       if (calls === 1) {
         return new Response('Too Many Requests', {
           status: 429,
-          headers: { 'retry-after': '3' },
+          headers: { 'retry-after': '30' },
         });
       }
       return new Response(JSON.stringify({ status: 'OK', result: ['recovered'] }));
@@ -97,7 +102,7 @@ test('PolygonClient chờ Retry-After và tự thử lại HTTP 429 không phả
   const result = await client.listProblems();
   assert.deepEqual(result, ['recovered']);
   assert.equal(calls, 2);
-  assert.deepEqual(waits, [3_000]);
+  assert.deepEqual(waits, [30_000]);
 });
 
 test('PolygonClient trả thông báo rate limit rõ ràng sau khi hết retry', async () => {
@@ -142,4 +147,30 @@ test('PolygonClient tuần tự hóa request đồng thời theo khoảng cách 
 
   await Promise.all([client.listProblems(), client.listProblems()]);
   assert.deepEqual(requestTimes, [10_000, 11_000]);
+});
+
+test('nhiều PolygonClient dùng chung scheduler không gửi request song song', async () => {
+  let clock = 50_000;
+  const requestTimes = [];
+  const scheduler = new PolygonRequestScheduler({
+    requestIntervalMs: 2_000,
+    now: () => clock,
+    sleepImpl: async (milliseconds) => { clock += milliseconds; },
+  });
+  const fetchImpl = async () => {
+    requestTimes.push(clock);
+    return new Response(JSON.stringify({ status: 'OK', result: [] }));
+  };
+  const common = {
+    apiKey: 'key',
+    secretKey: 'secret',
+    now: () => clock,
+    requestScheduler: scheduler,
+    fetchImpl,
+  };
+  const firstClient = new PolygonClient(common);
+  const secondClient = new PolygonClient(common);
+
+  await Promise.all([firstClient.listProblems(), secondClient.listProblems()]);
+  assert.deepEqual(requestTimes, [50_000, 52_000]);
 });

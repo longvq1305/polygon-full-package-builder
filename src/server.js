@@ -5,16 +5,20 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { JobManager } from './job-manager.js';
-import { PolygonClient, PolygonApiError } from './polygon-client.js';
+import { PolygonClient, PolygonApiError, PolygonRequestScheduler } from './polygon-client.js';
+import { CredentialStore } from './credential-store.js';
 
 const HOST = process.env.HOST || '127.0.0.1';
 const PORT = Number(process.env.PORT) || 4173;
 const PUBLIC_DIR = fileURLToPath(new URL('../public/', import.meta.url));
-const SESSION_TTL_MS = 15 * 60 * 1_000;
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 const BODY_LIMIT_BYTES = 32 * 1024;
 
 const sessions = new Map();
 const jobManager = new JobManager();
+const credentialStore = new CredentialStore();
+const polygonRequestScheduler = new PolygonRequestScheduler();
+const TERMINAL_JOB_STATES = new Set(['COMPLETED', 'COMPLETED_WITH_ERRORS', 'CANCELLED']);
 
 const mimeTypes = {
   '.css': 'text/css; charset=utf-8',
@@ -62,17 +66,17 @@ function getSession(sessionId) {
     sessions.delete(sessionId);
     return null;
   }
+  session.expiresAt = Date.now() + SESSION_TTL_MS;
   return session;
 }
 
-async function createSession(request, response) {
-  const { apiKey, secretKey } = await readJson(request);
+async function openSession({ apiKey, secretKey, remember = false }, response) {
   if (typeof apiKey !== 'string' || typeof secretKey !== 'string' || !apiKey.trim() || !secretKey.trim()) {
     sendError(response, 400, 'Vui lòng nhập đầy đủ API key và secret key.');
     return;
   }
 
-  const client = new PolygonClient({ apiKey, secretKey });
+  const client = new PolygonClient({ apiKey, secretKey, requestScheduler: polygonRequestScheduler });
   let problems;
   try {
     problems = await client.listProblems();
@@ -84,15 +88,18 @@ async function createSession(request, response) {
     .filter((problem) => problem.accessType === 'OWNER' && !problem.deleted)
     .sort((left, right) => left.name.localeCompare(right.name, 'vi'));
   const id = randomUUID();
+  if (remember) await credentialStore.save({ apiKey, secretKey });
   sessions.set(id, {
     client,
     problems: ownedProblems,
     expiresAt: Date.now() + SESSION_TTL_MS,
+    activeJobId: null,
   });
 
   sendJson(response, 201, {
     sessionId: id,
     expiresInSeconds: SESSION_TTL_MS / 1_000,
+    credentialsSaved: await credentialStore.hasSaved(),
     problems: ownedProblems.map(({ id: problemId, name, owner, revision, workingCopyRevision, latestPackage, modified }) => ({
       id: problemId,
       name,
@@ -105,11 +112,39 @@ async function createSession(request, response) {
   });
 }
 
+async function createSession(request, response) {
+  const { apiKey, secretKey, remember = false } = await readJson(request);
+  await openSession({ apiKey, secretKey, remember: Boolean(remember) }, response);
+}
+
+async function createSavedSession(response) {
+  const credentials = await credentialStore.load();
+  if (!credentials) {
+    sendError(response, 404, 'Chưa có API key/secret key được lưu trên máy.');
+    return;
+  }
+  try {
+    await openSession({ ...credentials, remember: false }, response);
+  } finally {
+    credentials.apiKey = '';
+    credentials.secretKey = '';
+  }
+}
+
 async function createBuildJob(request, response, sessionId) {
   const session = getSession(sessionId);
   if (!session) {
     sendError(response, 401, 'Phiên đã hết hạn. Vui lòng nhập lại API key và secret key.');
     return;
+  }
+
+  if (session.activeJobId) {
+    const activeJob = jobManager.getJob(session.activeJobId);
+    if (activeJob && !TERMINAL_JOB_STATES.has(activeJob.state)) {
+      sendError(response, 409, 'Một job khác đang chạy. Hãy chờ job đó hoàn tất hoặc dừng theo dõi.');
+      return;
+    }
+    session.activeJobId = null;
   }
 
   const { problemIds, verify = false, concurrency = 2 } = await readJson(request);
@@ -129,13 +164,14 @@ async function createBuildJob(request, response, sessionId) {
     return;
   }
 
-  sessions.delete(sessionId);
   const job = jobManager.createJob({
     client: session.client,
     problems: selectedProblems,
     verify: Boolean(verify),
     concurrency,
+    destroyClientOnFinish: false,
   });
+  session.activeJobId = job.id;
   sendJson(response, 202, job);
 }
 
@@ -180,6 +216,19 @@ async function handleRequest(request, response) {
       await createSession(request, response);
       return;
     }
+    if (request.method === 'POST' && path === '/api/sessions/saved') {
+      await createSavedSession(response);
+      return;
+    }
+    if (request.method === 'GET' && path === '/api/credentials/status') {
+      sendJson(response, 200, { saved: await credentialStore.hasSaved() });
+      return;
+    }
+    if (request.method === 'DELETE' && path === '/api/credentials') {
+      await credentialStore.clear();
+      sendJson(response, 200, { ok: true });
+      return;
+    }
 
     const buildMatch = path.match(/^\/api\/sessions\/([^/]+)\/build$/);
     if (request.method === 'POST' && buildMatch) {
@@ -191,6 +240,11 @@ async function handleRequest(request, response) {
     if (request.method === 'DELETE' && sessionMatch) {
       const session = sessions.get(sessionMatch[1]);
       if (session) {
+        const activeJob = session.activeJobId ? jobManager.getJob(session.activeJobId) : null;
+        if (activeJob && !TERMINAL_JOB_STATES.has(activeJob.state)) {
+          sendError(response, 409, 'Không thể đóng phiên khi job đang chạy.');
+          return;
+        }
         session.client.destroy();
         sessions.delete(sessionMatch[1]);
       }
@@ -222,7 +276,9 @@ async function handleRequest(request, response) {
     }
     await serveStatic(path, response);
   } catch (error) {
-    const statusCode = error instanceof PolygonApiError ? 502 : 400;
+    const statusCode = error instanceof PolygonApiError
+      ? (error.statusCode === 429 ? 429 : 502)
+      : 400;
     sendError(response, statusCode, error instanceof Error ? error.message : 'Có lỗi không xác định.');
   }
 }

@@ -6,6 +6,10 @@ const elements = {
   secretKey: document.querySelector('#secret-key'),
   toggleSecret: document.querySelector('#toggle-secret'),
   connectButton: document.querySelector('#connect-button'),
+  rememberCredentials: document.querySelector('#remember-credentials'),
+  savedCredentialsActions: document.querySelector('#saved-credentials-actions'),
+  useSavedCredentials: document.querySelector('#use-saved-credentials'),
+  forgetSavedCredentials: document.querySelector('#forget-saved-credentials'),
   problemsPanel: document.querySelector('#problems-panel'),
   problemSummary: document.querySelector('#problem-summary'),
   problemFilter: document.querySelector('#problem-filter'),
@@ -38,6 +42,7 @@ const state = {
   selected: new Set(),
   jobId: null,
   pollTimer: null,
+  credentialsSaved: false,
 };
 
 const terminalJobStates = new Set(['COMPLETED', 'COMPLETED_WITH_ERRORS', 'CANCELLED']);
@@ -107,9 +112,14 @@ function updateSelectedCount() {
   elements.buildButton.disabled = count === 0;
 }
 
-function resetToCredentials() {
+function updateSavedCredentialUi(saved) {
+  state.credentialsSaved = Boolean(saved);
+  elements.savedCredentialsActions.hidden = !state.credentialsSaved;
+}
+
+function resetToCredentials({ closeSession = true } = {}) {
   clearTimeout(state.pollTimer);
-  if (state.sessionId) {
+  if (closeSession && state.sessionId) {
     void fetch(`/api/sessions/${encodeURIComponent(state.sessionId)}`, { method: 'DELETE' });
   }
   state.sessionId = null;
@@ -120,7 +130,39 @@ function resetToCredentials() {
   elements.credentialsPanel.hidden = false;
   elements.problemsPanel.hidden = true;
   elements.progressPanel.hidden = true;
+  updateSavedCredentialUi(state.credentialsSaved);
   setAlert('');
+}
+
+function applySessionResult(result) {
+  state.sessionId = result.sessionId;
+  state.problems = result.problems;
+  state.selected = new Set(result.problems.filter((problem) => !problem.modified).map((problem) => String(problem.id)));
+  updateSavedCredentialUi(result.credentialsSaved);
+  elements.apiKey.value = '';
+  elements.secretKey.value = '';
+  const modifiedCount = result.problems.filter((problem) => problem.modified).length;
+  elements.problemSummary.textContent = result.problems.length
+    ? `Tìm thấy ${result.problems.length} problem bạn sở hữu. Đã chọn ${result.problems.length - modifiedCount} problem sẵn sàng${modifiedCount ? `; ${modifiedCount} problem chưa commit được bỏ qua.` : '.'}`
+    : 'Không tìm thấy problem nào có quyền OWNER.';
+  elements.credentialsPanel.hidden = true;
+  elements.problemsPanel.hidden = false;
+  elements.progressPanel.hidden = true;
+  renderProblems();
+}
+
+async function connectWithSavedCredentials({ automatic = false } = {}) {
+  setAlert('');
+  setButtonLoading(elements.useSavedCredentials, true, 'Đang kết nối…');
+  try {
+    const result = await api('/api/sessions/saved', { method: 'POST' });
+    applySessionResult(result);
+    if (!automatic) elements.problemsPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (error) {
+    setAlert(`Không dùng được khóa đã lưu: ${error.message}`);
+  } finally {
+    setButtonLoading(elements.useSavedCredentials, false);
+  }
 }
 
 elements.toggleSecret.addEventListener('click', () => {
@@ -137,19 +179,13 @@ elements.credentialsForm.addEventListener('submit', async (event) => {
   try {
     const result = await api('/api/sessions', {
       method: 'POST',
-      body: JSON.stringify({ apiKey: elements.apiKey.value, secretKey: elements.secretKey.value }),
+      body: JSON.stringify({
+        apiKey: elements.apiKey.value,
+        secretKey: elements.secretKey.value,
+        remember: elements.rememberCredentials.checked,
+      }),
     });
-    state.sessionId = result.sessionId;
-    state.problems = result.problems;
-    state.selected = new Set(result.problems.filter((problem) => !problem.modified).map((problem) => String(problem.id)));
-    elements.secretKey.value = '';
-    const modifiedCount = result.problems.filter((problem) => problem.modified).length;
-    elements.problemSummary.textContent = result.problems.length
-      ? `Tìm thấy ${result.problems.length} problem bạn sở hữu. Đã chọn ${result.problems.length - modifiedCount} problem sẵn sàng${modifiedCount ? `; ${modifiedCount} problem chưa commit được bỏ qua.` : '.'}`
-      : 'Không tìm thấy problem nào có quyền OWNER.';
-    elements.credentialsPanel.hidden = true;
-    elements.problemsPanel.hidden = false;
-    renderProblems();
+    applySessionResult(result);
     elements.problemsPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (error) {
     setAlert(error.message);
@@ -178,6 +214,16 @@ elements.clearAll.addEventListener('click', () => {
   renderProblems();
 });
 elements.reconnectButton.addEventListener('click', resetToCredentials);
+elements.useSavedCredentials.addEventListener('click', () => connectWithSavedCredentials());
+elements.forgetSavedCredentials.addEventListener('click', async () => {
+  try {
+    await api('/api/credentials', { method: 'DELETE' });
+    updateSavedCredentialUi(false);
+    setAlert('Đã xóa credential được lưu trên máy.', 'success');
+  } catch (error) {
+    setAlert(error.message);
+  }
+});
 
 elements.buildButton.addEventListener('click', async () => {
   if (!state.sessionId || state.selected.size === 0) return;
@@ -192,7 +238,6 @@ elements.buildButton.addEventListener('click', async () => {
         verify: elements.verify.checked,
       }),
     });
-    state.sessionId = null;
     state.jobId = job.id;
     elements.problemsPanel.hidden = true;
     elements.progressPanel.hidden = false;
@@ -234,6 +279,12 @@ function renderJob(job) {
   elements.finishedActions.hidden = !done;
 
   if (done) {
+    for (const item of job.items) {
+      if (item.state === 'READY' || item.state === 'SKIPPED') {
+        const problem = state.problems.find((candidate) => String(candidate.id) === String(item.problem.id));
+        if (problem) problem.latestPackage = problem.revision;
+      }
+    }
     elements.jobTitle.textContent = job.state === 'COMPLETED' ? 'Build đã hoàn tất' : 'Job đã kết thúc';
     elements.jobSummary.textContent = `${counts.ready}/${counts.total} package thành công${counts.failed ? `, ${counts.failed} lỗi` : ''}.`;
   } else {
@@ -287,4 +338,24 @@ elements.cancelButton.addEventListener('click', async () => {
   }
 });
 
-elements.newJobButton.addEventListener('click', resetToCredentials);
+elements.newJobButton.addEventListener('click', () => {
+  clearTimeout(state.pollTimer);
+  state.jobId = null;
+  elements.progressPanel.hidden = true;
+  elements.problemsPanel.hidden = false;
+  elements.cancelButton.disabled = false;
+  renderProblems();
+  elements.problemsPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+
+async function initializeCredentials() {
+  try {
+    const status = await api('/api/credentials/status');
+    updateSavedCredentialUi(status.saved);
+    if (status.saved) await connectWithSavedCredentials({ automatic: true });
+  } catch (error) {
+    setAlert(`Không đọc được cấu hình đã lưu: ${error.message}`);
+  }
+}
+
+void initializeCredentials();

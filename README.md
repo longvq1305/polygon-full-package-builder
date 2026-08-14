@@ -9,6 +9,7 @@ Web tool chạy cục bộ để:
 - giới hạn 1–4 problem build song song và hiển thị lỗi riêng cho từng problem.
 - tự bỏ qua revision đã có full package và problem đang có thay đổi chưa commit.
 - tự điều tiết request và chờ/thử lại khi Polygon trả HTTP 429.
+- tùy chọn ghi nhớ credential bằng Windows DPAPI để dùng lại sau khi restart và giữa nhiều job.
 
 ## Yêu cầu
 
@@ -30,7 +31,7 @@ Nhấp đúp file **`Chay Polygon Builder.cmd`**. Tool sẽ tự khởi động 
 npm start
 ```
 
-Mở [http://127.0.0.1:4173](http://127.0.0.1:4173), nhập API key và secret key, chọn problem rồi nhấn **Build full package**.
+Mở [http://127.0.0.1:4173](http://127.0.0.1:4173), nhập API key và secret key, bật **Ghi nhớ** nếu muốn dùng lại, chọn problem rồi nhấn **Build full package**.
 
 Không cần `npm install` vì project chỉ dùng thư viện chuẩn của Node.js.
 
@@ -45,8 +46,9 @@ npm start
 
 - Server mặc định chỉ lắng nghe trên `127.0.0.1`, không mở ra mạng LAN.
 - Credential được gửi bằng POST tới tiến trình cục bộ, không nằm trong URL hay log.
-- Credential chỉ giữ trong RAM. Phiên chưa build hết hạn sau 15 phút; credential của job bị xóa ngay khi job kết thúc.
-- Tool không lưu credential vào file, local storage hoặc cookie.
+- Khi bật **Ghi nhớ**, credential được Windows DPAPI mã hóa cho tài khoản Windows hiện tại và lưu tại `%APPDATA%\PolygonFullPackageBuilder\credentials.dat`; không lưu plaintext, local storage hoặc cookie.
+- Khi không bật **Ghi nhớ**, credential chỉ tồn tại trong RAM. Nút **Quên khóa đã lưu** xóa file DPAPI.
+- Một phiên/client được dùng lại giữa nhiều job để giữ chung hàng đợi và cooldown rate limit.
 - File `.env*` được bỏ qua bởi Git để giảm nguy cơ commit nhầm secret.
 
 ## Hành vi cần lưu ý
@@ -57,6 +59,7 @@ npm start
 - Một problem lỗi không làm dừng các problem còn lại.
 - Revision đã có full package `READY` được đánh dấu **Đã có package**, không bị báo lỗi và không tạo bản trùng.
 - Problem có working copy chưa commit được hiển thị nhưng không được chọn; hãy commit trên Polygon rồi kết nối lại.
+- Request được tuần tự hóa, mặc định cách nhau ít nhất 5 giây. Sau HTTP 429, khoảng cách tăng ít nhất 10 giây và tool tự backoff tối đa 8 lần.
 
 ## Kiểm thử
 
@@ -72,7 +75,10 @@ Các test dùng Polygon client giả, không gọi API thật và không cần c
 | Method | Endpoint | Mục đích |
 |---|---|---|
 | `POST` | `/api/sessions` | Xác thực và lấy danh sách problem OWNER |
-| `DELETE` | `/api/sessions/:id` | Xóa credential của phiên chưa build |
+| `POST` | `/api/sessions/saved` | Mở phiên bằng credential DPAPI đã lưu |
+| `DELETE` | `/api/sessions/:id` | Đóng phiên/client đang giữ trong RAM |
+| `GET` | `/api/credentials/status` | Kiểm tra có credential đã lưu hay chưa |
+| `DELETE` | `/api/credentials` | Xóa credential DPAPI đã lưu |
 | `POST` | `/api/sessions/:id/build` | Tạo job build cho danh sách đã chọn |
 | `GET` | `/api/jobs/:id` | Lấy tiến độ job |
 | `DELETE` | `/api/jobs/:id` | Dừng gửi mới/theo dõi job |

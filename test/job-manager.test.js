@@ -47,6 +47,27 @@ test('JobManager build và poll đến READY', async () => {
   assert.equal(destroyed, true);
 });
 
+test('JobManager xác nhận full package đã tồn tại chỉ bằng một request build', async () => {
+  let apiCalls = 0;
+  const client = {
+    async buildFullPackage() {
+      apiCalls += 1;
+      throw new Error('problemId: There is already non-failed full package for this revision without verification.');
+    },
+    async listPackages() { apiCalls += 1; return []; },
+    destroy() {},
+  };
+  const manager = new JobManager();
+  const readyProblem = { ...problem(11), latestPackage: 7 };
+  const created = manager.createJob({ client, problems: [readyProblem], concurrency: 1 });
+
+  await waitUntil(() => manager.getJob(created.id).finishedAt !== null);
+  const job = manager.getJob(created.id);
+  assert.equal(job.state, 'COMPLETED');
+  assert.equal(job.items[0].state, 'SKIPPED');
+  assert.equal(apiCalls, 1);
+});
+
 test('JobManager cô lập lỗi theo từng problem', async () => {
   const client = {
     async buildFullPackage(problemId) {
@@ -80,6 +101,7 @@ test('JobManager giới hạn concurrency trong khoảng 1..4', () => {
 });
 
 test('JobManager tìm package mới khi buildPackage trả result null', async () => {
+  let clock = 20_000;
   let listCalls = 0;
   const client = {
     async buildFullPackage() { return null; },
@@ -93,7 +115,11 @@ test('JobManager tìm package mới khi buildPackage trả result null', async (
     },
     destroy() {},
   };
-  const manager = new JobManager({ pollIntervalMs: 0, sleepImpl: async () => {} });
+  const manager = new JobManager({
+    pollIntervalMs: 1,
+    sleepImpl: async (milliseconds) => { clock += milliseconds; },
+    now: () => clock,
+  });
   const created = manager.createJob({ client, problems: [problem(3)], concurrency: 1 });
 
   await waitUntil(() => manager.getJob(created.id).finishedAt !== null);
@@ -131,6 +157,7 @@ test('JobManager coi full package đã tồn tại là SKIPPED thay vì lỗi', 
 });
 
 test('JobManager phát hiện package mới FAILED mà không chờ timeout', async () => {
+  let clock = 40_000;
   let listCalls = 0;
   const client = {
     async buildFullPackage() { return null; },
@@ -148,7 +175,11 @@ test('JobManager phát hiện package mới FAILED mà không chờ timeout', as
     },
     destroy() {},
   };
-  const manager = new JobManager({ pollIntervalMs: 0, sleepImpl: async () => {} });
+  const manager = new JobManager({
+    pollIntervalMs: 1,
+    sleepImpl: async (milliseconds) => { clock += milliseconds; },
+    now: () => clock,
+  });
   const created = manager.createJob({ client, problems: [problem(5)], concurrency: 1 });
 
   await waitUntil(() => manager.getJob(created.id).finishedAt !== null);

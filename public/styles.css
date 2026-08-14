@@ -91,6 +91,12 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
 .secret-field { position: relative; display: block; }
 .secret-field input { padding-right: 66px; }
 .icon-button { position: absolute; right: 7px; top: 7px; height: 34px; padding: 0 10px; border: 0; background: transparent; color: var(--green); font-size: 12px; font-weight: 750; }
+.remember-credentials { grid-column: 1 / -1; display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 13px; cursor: pointer; }
+.remember-credentials input { width: 17px; min-height: 17px; padding: 0; accent-color: var(--green); }
+.remember-credentials > span { margin: 0 !important; font-size: 13px !important; font-weight: 500 !important; letter-spacing: 0 !important; text-transform: none !important; }
+.saved-credentials-actions { display: flex; align-items: center; gap: 12px; margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+.saved-credentials-actions .secondary-button { margin-left: auto; }
+.danger-text { color: var(--red); }
 
 .primary-button, .secondary-button, .danger-button { display: inline-flex; align-items: center; justify-content: center; gap: 24px; min-height: 48px; padding: 0 20px; border-radius: 3px; font-weight: 750; border: 1px solid transparent; }
 .primary-button { color: white; background: var(--green); }

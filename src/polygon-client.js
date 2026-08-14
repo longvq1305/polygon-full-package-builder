@@ -1,8 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 
 const DEFAULT_BASE_URL = 'https://polygon.codeforces.com/api';
-const DEFAULT_REQUEST_INTERVAL_MS = 1_100;
-const DEFAULT_RATE_LIMIT_RETRIES = 6;
+const DEFAULT_REQUEST_INTERVAL_MS = 5_000;
+const DEFAULT_RATE_LIMIT_RETRIES = 8;
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -21,6 +21,46 @@ export class PolygonApiError extends Error {
     this.name = 'PolygonApiError';
     this.method = method;
     this.statusCode = statusCode;
+  }
+}
+
+export class PolygonRequestScheduler {
+  constructor({
+    requestIntervalMs = DEFAULT_REQUEST_INTERVAL_MS,
+    now = () => Date.now(),
+    sleepImpl = sleep,
+  } = {}) {
+    this.baseIntervalMs = Math.max(0, Number(requestIntervalMs) || 0);
+    this.currentIntervalMs = this.baseIntervalMs;
+    this.now = now;
+    this.sleep = sleepImpl;
+    this.lastRequestAt = 0;
+    this.rateLimitUntil = 0;
+    this.queue = Promise.resolve();
+  }
+
+  enqueue(action) {
+    const request = this.queue.then(async () => {
+      const earliestRequestAt = Math.max(
+        this.rateLimitUntil,
+        this.lastRequestAt + this.currentIntervalMs,
+      );
+      const delayMs = Math.max(0, earliestRequestAt - this.now());
+      if (delayMs > 0) await this.sleep(delayMs);
+      this.lastRequestAt = this.now();
+      return action();
+    });
+    this.queue = request.catch(() => {});
+    return request;
+  }
+
+  applyRateLimit({ retryAfterMs = 0, attempt = 0 }) {
+    this.currentIntervalMs = Math.max(this.currentIntervalMs, 10_000);
+    const exponentialBackoffMs = Math.min(120_000, 10_000 * (2 ** attempt));
+    this.rateLimitUntil = Math.max(
+      this.rateLimitUntil,
+      this.now() + Math.max(retryAfterMs, exponentialBackoffMs),
+    );
   }
 }
 
@@ -66,6 +106,7 @@ export class PolygonClient {
     requestIntervalMs = DEFAULT_REQUEST_INTERVAL_MS,
     maxRateLimitRetries = DEFAULT_RATE_LIMIT_RETRIES,
     sleepImpl = sleep,
+    requestScheduler,
   }) {
     if (!apiKey?.trim() || !secretKey?.trim()) {
       throw new TypeError('API key và secret key là bắt buộc.');
@@ -81,12 +122,12 @@ export class PolygonClient {
     this.now = now;
     this.nonce = nonce;
     this.timeoutMs = timeoutMs;
-    this.requestIntervalMs = Math.max(0, Number(requestIntervalMs) || 0);
     this.maxRateLimitRetries = Math.max(0, Number(maxRateLimitRetries) || 0);
-    this.sleep = sleepImpl;
-    this.lastRequestAt = 0;
-    this.rateLimitUntil = 0;
-    this.requestQueue = Promise.resolve();
+    this.requestScheduler = requestScheduler || new PolygonRequestScheduler({
+      requestIntervalMs,
+      now,
+      sleepImpl,
+    });
   }
 
   destroy() {
@@ -101,7 +142,7 @@ export class PolygonClient {
 
     let response;
     for (let attempt = 0; attempt <= this.maxRateLimitRetries; attempt += 1) {
-      response = await this.#enqueueRequest(() => this.#fetch(method, params));
+      response = await this.requestScheduler.enqueue(() => this.#fetch(method, params));
       if (response.status !== 429) break;
 
       if (attempt === this.maxRateLimitRetries) {
@@ -111,12 +152,8 @@ export class PolygonClient {
         );
       }
 
-      const retryAfterMs = parseRetryAfter(response.headers.get('retry-after'), this.now());
-      const exponentialBackoffMs = Math.min(60_000, 2_000 * (2 ** attempt));
-      this.rateLimitUntil = Math.max(
-        this.rateLimitUntil,
-        this.now() + (retryAfterMs ?? exponentialBackoffMs),
-      );
+      const retryAfterMs = parseRetryAfter(response.headers.get('retry-after'), this.now()) || 0;
+      this.requestScheduler.applyRateLimit({ retryAfterMs, attempt });
       await response.body?.cancel().catch(() => {});
     }
 
@@ -139,21 +176,6 @@ export class PolygonClient {
     }
 
     return payload.result;
-  }
-
-  #enqueueRequest(action) {
-    const request = this.requestQueue.then(async () => {
-      const earliestRequestAt = Math.max(
-        this.rateLimitUntil,
-        this.lastRequestAt + this.requestIntervalMs,
-      );
-      const delayMs = Math.max(0, earliestRequestAt - this.now());
-      if (delayMs > 0) await this.sleep(delayMs);
-      this.lastRequestAt = this.now();
-      return action();
-    });
-    this.requestQueue = request.catch(() => {});
-    return request;
   }
 
   async #fetch(method, params) {

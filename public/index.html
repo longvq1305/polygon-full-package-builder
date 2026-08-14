@@ -34,8 +34,8 @@
         <div class="security-note">
           <span class="security-icon" aria-hidden="true">◆</span>
           <div>
-            <strong>Khóa không được lưu xuống đĩa</strong>
-            <p>API key và secret chỉ tồn tại trong bộ nhớ của tiến trình cục bộ, rồi được xóa khi job kết thúc.</p>
+            <strong>Credential được bảo vệ bởi Windows</strong>
+            <p>Nếu bật “Ghi nhớ”, API key và secret được mã hóa bằng Windows DPAPI cho riêng tài khoản Windows hiện tại; không lưu plaintext.</p>
           </div>
         </div>
       </section>
@@ -66,7 +66,16 @@
             <span>Kết nối và tìm problem</span>
             <span aria-hidden="true">→</span>
           </button>
+          <label class="remember-credentials">
+            <input id="remember-credentials" type="checkbox" checked>
+            <span>Ghi nhớ API key và secret key trên máy này bằng mã hóa Windows DPAPI.</span>
+          </label>
         </form>
+        <div id="saved-credentials-actions" class="saved-credentials-actions" hidden>
+          <span>Máy này đã có credential được mã hóa.</span>
+          <button id="use-saved-credentials" type="button" class="secondary-button">Dùng khóa đã lưu</button>
+          <button id="forget-saved-credentials" type="button" class="text-button danger-text">Quên khóa đã lưu</button>
+        </div>
       </section>
 
       <section id="problems-panel" class="panel" hidden>
@@ -110,8 +119,8 @@
           <label>
             <span>Build song song</span>
             <select id="concurrency">
-              <option value="1">1 problem</option>
-              <option value="2" selected>2 problems</option>
+              <option value="1" selected>1 problem</option>
+              <option value="2">2 problems</option>
               <option value="3">3 problems</option>
               <option value="4">4 problems</option>
             </select>
@@ -175,6 +184,6 @@
       <span>Không liên kết chính thức với Codeforces.</span>
     </footer>
 
-    <script type="module" src="/app.js?v=2"></script>
+    <script type="module" src="/app.js?v=3"></script>
   </body>
 </html>
