@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isEligibleProblem } from '../public/package-status.js';
+import {
+  isEligibleProblem,
+  supportsPackageHistoryFilter,
+} from '../public/package-status.js';
 import { classifyPackageStatus } from '../src/server.js';
 
 const problemWithPackage = { id: 1, latestPackage: 9 };
@@ -38,4 +41,12 @@ test('giao diện chỉ giữ problem chưa build hoặc Standard', () => {
   assert.equal(isEligibleProblem({ packageStatus: 'FULL' }), false);
   assert.equal(isEligibleProblem({ packageStatus: 'LOADING' }), false);
   assert.equal(isEligibleProblem({ packageStatus: 'ERROR' }), false);
+});
+
+test('giao diện từ chối backend cũ chưa có bộ lọc lịch sử', () => {
+  assert.equal(supportsPackageHistoryFilter({ ok: true }), false);
+  assert.equal(supportsPackageHistoryFilter({
+    ok: true,
+    capabilities: ['full-package-history-filter-v1'],
+  }), true);
 });

@@ -13,6 +13,8 @@ const PORT = Number(process.env.PORT) || 4173;
 const PUBLIC_DIR = fileURLToPath(new URL('../public/', import.meta.url));
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 const BODY_LIMIT_BYTES = 32 * 1024;
+const APP_VERSION = '1.1.0';
+const APP_CAPABILITIES = ['full-package-history-filter-v1'];
 
 const sessions = new Map();
 const jobManager = new JobManager();
@@ -251,7 +253,11 @@ async function handleRequest(request, response) {
 
   try {
     if (request.method === 'GET' && path === '/api/health') {
-      sendJson(response, 200, { ok: true });
+      sendJson(response, 200, {
+        ok: true,
+        version: APP_VERSION,
+        capabilities: APP_CAPABILITIES,
+      });
       return;
     }
     if (request.method === 'POST' && path === '/api/sessions') {

@@ -1,4 +1,4 @@
-import { isEligibleProblem } from './package-status.js';
+import { isEligibleProblem, supportsPackageHistoryFilter } from './package-status.js';
 
 const elements = {
   alert: document.querySelector('#alert'),
@@ -471,6 +471,10 @@ elements.newJobButton.addEventListener('click', () => {
 
 async function initializeCredentials() {
   try {
+    const health = await api('/api/health');
+    if (!supportsPackageHistoryFilter(health)) {
+      throw new Error('Backend đang chạy là phiên bản cũ. Hãy đóng cửa sổ tool cũ rồi mở lại file Chay Polygon Builder.cmd.');
+    }
     const status = await api('/api/credentials/status');
     updateSavedCredentialUi(status.saved);
     if (status.saved) await connectWithSavedCredentials({ automatic: true });

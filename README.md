@@ -62,6 +62,7 @@ npm start
 - Problem có working copy chưa commit được hiển thị nhưng không được chọn; hãy commit trên Polygon rồi kết nối lại.
 - Request được tuần tự hóa, mặc định cách nhau ít nhất 5 giây. Sau HTTP 429, khoảng cách tăng ít nhất 10 giây và tool tự backoff tối đa 8 lần.
 - Loại package được đọc tuần tự trong nền và tạm dừng khi job build chạy để không chiếm hàng đợi request.
+- Giao diện kiểm tra capability của backend và cảnh báo nếu một tiến trình phiên bản cũ vẫn đang giữ cổng 4173.
 
 ## Kiểm thử
 
