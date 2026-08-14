@@ -106,6 +106,7 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
 .danger-button { min-height: 40px; color: var(--red); border-color: #d8aaa5; background: transparent; font-size: 13px; }
 .text-button { padding: 4px; border: 0; background: none; color: var(--green); text-decoration: underline; }
 .selection-heading, .progress-heading { display: flex; justify-content: space-between; align-items: start; gap: 30px; max-width: none; }
+.heading-actions { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
 
 .toolbar { display: flex; gap: 10px; margin-bottom: 14px; }
 .search-field { position: relative; flex: 1; }
@@ -178,6 +179,7 @@ footer { display: flex; justify-content: space-between; padding: 28px 0 42px; co
   .search-field { flex-basis: 100%; }
   .selection-heading, .progress-heading { display: block; }
   .selection-heading button, .progress-heading button { margin-top: 16px; }
+  .heading-actions { flex-wrap: wrap; }
   .stats-grid { grid-template-columns: 1fr 1fr; }
   .stats-grid div:nth-child(3) { border-top: 1px solid var(--line); border-left: 0; }
   .stats-grid div:nth-child(4) { border-top: 1px solid var(--line); }

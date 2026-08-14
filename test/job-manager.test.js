@@ -47,6 +47,24 @@ test('JobManager build và poll đến READY', async () => {
   assert.equal(destroyed, true);
 });
 
+test('JobManager gọi onFinished sau khi job có kết quả cuối', async () => {
+  let finishedJob;
+  const client = {
+    async buildFullPackage() { return { id: 9, state: 'READY', type: 'windows' }; },
+    destroy() {},
+  };
+  const manager = new JobManager();
+  manager.createJob({
+    client,
+    problems: [problem(9)],
+    onFinished: async (job) => { finishedJob = job; },
+  });
+
+  await waitUntil(() => Boolean(finishedJob));
+  assert.equal(finishedJob.state, 'COMPLETED');
+  assert.equal(finishedJob.items[0].state, 'READY');
+});
+
 test('JobManager xác nhận full package đã tồn tại chỉ bằng một request build', async () => {
   let apiCalls = 0;
   const client = {

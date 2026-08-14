@@ -10,6 +10,7 @@ Web tool chạy cục bộ để:
 - tự bỏ qua revision đã có full package và problem đang có thay đổi chưa commit.
 - tự điều tiết request và chờ/thử lại khi Polygon trả HTTP 429.
 - tùy chọn ghi nhớ credential bằng Windows DPAPI để dùng lại sau khi restart và giữa nhiều job.
+- ghi nhớ trạng thái package trong một file JSON nhỏ trên máy, tách riêng theo fingerprint SHA-256 của từng cặp API key/secret key.
 - danh sách kiểm tra toàn bộ lịch sử package và chỉ hiển thị problem **Chưa build** hoặc chỉ từng build **Standard**; problem từng có **Full package** `READY` ở bất kỳ revision nào được ẩn.
 
 ## Yêu cầu
@@ -48,6 +49,8 @@ npm start
 - Server mặc định chỉ lắng nghe trên `127.0.0.1`, không mở ra mạng LAN.
 - Credential được gửi bằng POST tới tiến trình cục bộ, không nằm trong URL hay log.
 - Khi bật **Ghi nhớ**, credential được Windows DPAPI mã hóa cho tài khoản Windows hiện tại và lưu tại `%APPDATA%\PolygonFullPackageBuilder\credentials.dat`; không lưu plaintext, local storage hoặc cookie.
+- Trạng thái package nằm trong một file JSON nhỏ tại `%APPDATA%\PolygonFullPackageBuilder\package-status.json`. File chỉ chứa problem ID, revision, trạng thái, thời điểm kiểm tra và fingerprint SHA-256 một chiều; không chứa API key hoặc secret key.
+- File trạng thái nằm ngoài thư mục project nên không được Git theo dõi và không thể bị push cùng source code.
 - Khi không bật **Ghi nhớ**, credential chỉ tồn tại trong RAM. Nút **Quên khóa đã lưu** xóa file DPAPI.
 - Một phiên/client được dùng lại giữa nhiều job để giữ chung hàng đợi và cooldown rate limit.
 - File `.env*` được bỏ qua bởi Git để giảm nguy cơ commit nhầm secret.
@@ -62,6 +65,7 @@ npm start
 - Problem có working copy chưa commit được hiển thị nhưng không được chọn; hãy commit trên Polygon rồi kết nối lại.
 - Request được tuần tự hóa, mặc định cách nhau ít nhất 5 giây. Sau HTTP 429, khoảng cách tăng ít nhất 10 giây và tool tự backoff tối đa 8 lần.
 - Loại package được đọc tuần tự trong nền và tạm dừng khi job build chạy để không chiếm hàng đợi request.
+- Trạng thái `FULL` trong file cục bộ được dùng lại lâu dài; `STANDARD/UNBUILT` được quét lại sau 24 giờ hoặc khi package revision thay đổi. Nút **Quét lại trạng thái** xóa dữ liệu của cặp khóa hiện tại rồi đọc lại từ Polygon.
 - Giao diện kiểm tra capability của backend và cảnh báo nếu một tiến trình phiên bản cũ vẫn đang giữ cổng 4173.
 
 ## Kiểm thử
@@ -81,6 +85,7 @@ Các test dùng Polygon client giả, không gọi API thật và không cần c
 | `POST` | `/api/sessions/saved` | Mở phiên bằng credential DPAPI đã lưu |
 | `DELETE` | `/api/sessions/:id` | Đóng phiên/client đang giữ trong RAM |
 | `GET` | `/api/sessions/:id/problems/:problemId/package-status` | Đọc loại package gần nhất của một problem |
+| `POST` | `/api/sessions/:id/package-status-store/refresh` | Xóa trạng thái đã nhớ và quét lại package của phiên hiện tại |
 | `GET` | `/api/credentials/status` | Kiểm tra có credential đã lưu hay chưa |
 | `DELETE` | `/api/credentials` | Xóa credential DPAPI đã lưu |
 | `POST` | `/api/sessions/:id/build` | Tạo job build cho danh sách đã chọn |

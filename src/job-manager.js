@@ -36,7 +36,14 @@ export class JobManager {
     this.now = now;
   }
 
-  createJob({ client, problems, verify = false, concurrency = 1, destroyClientOnFinish = true }) {
+  createJob({
+    client,
+    problems,
+    verify = false,
+    concurrency = 1,
+    destroyClientOnFinish = true,
+    onFinished = null,
+  }) {
     const safeConcurrency = Math.max(1, Math.min(4, Number(concurrency) || 2));
     const id = randomUUID();
     const createdAt = new Date(this.now()).toISOString();
@@ -50,6 +57,7 @@ export class JobManager {
       cancelRequested: false,
       client,
       destroyClientOnFinish,
+      onFinished: typeof onFinished === 'function' ? onFinished : null,
       items: problems.map((problem) => ({
         problem: publicProblem(problem),
         state: 'QUEUED',
@@ -145,6 +153,13 @@ export class JobManager {
       const hasCancellation = job.items.some((item) => item.state === 'CANCELLED');
       job.state = hasFailure ? 'COMPLETED_WITH_ERRORS' : hasCancellation ? 'CANCELLED' : 'COMPLETED';
       job.finishedAt = new Date(this.now()).toISOString();
+      if (job.onFinished) {
+        try {
+          await job.onFinished(this.toJSON(job));
+        } catch {
+          // Local-state/notification callbacks must not change the Polygon build result.
+        }
+      }
       if (job.destroyClientOnFinish) job.client.destroy();
       job.client = null;
     }

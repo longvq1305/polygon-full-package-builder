@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node src/server.js",
     "test": "node --test",
-    "check": "node --check src/server.js && node --check src/polygon-client.js && node --check src/job-manager.js && node --check src/credential-store.js && node --check public/package-status.js && node --check public/app.js"
+    "check": "node --check src/server.js && node --check src/polygon-client.js && node --check src/job-manager.js && node --check src/credential-store.js && node --check src/package-status-store.js && node --check public/package-status.js && node --check public/app.js"
   },
   "engines": {
     "node": ">=20"

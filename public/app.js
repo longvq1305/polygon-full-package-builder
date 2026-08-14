@@ -15,6 +15,7 @@ const elements = {
   problemsPanel: document.querySelector('#problems-panel'),
   problemSummary: document.querySelector('#problem-summary'),
   packageStatusProgress: document.querySelector('#package-status-progress'),
+  refreshPackageStatus: document.querySelector('#refresh-package-status'),
   problemFilter: document.querySelector('#problem-filter'),
   problemsBody: document.querySelector('#problems-body'),
   emptyFilter: document.querySelector('#empty-filter'),
@@ -49,6 +50,8 @@ const state = {
   jobActive: false,
   packageStatusLoadToken: 0,
   packageStatusLoading: false,
+  packageStatusStoreHits: 0,
+  refreshingStoredStatuses: false,
   selectNewEligible: true,
 };
 
@@ -157,6 +160,7 @@ function updateSelectedCount() {
     ? `${count} problem đã chọn · đang hoàn tất kiểm tra package`
     : `${count} problem đã chọn`;
   elements.buildButton.disabled = count === 0 || state.packageStatusLoading;
+  elements.refreshPackageStatus.disabled = state.packageStatusLoading || state.jobActive || state.refreshingStoredStatuses;
 }
 
 function updateSavedCredentialUi(saved) {
@@ -169,6 +173,8 @@ function resetToCredentials({ closeSession = true } = {}) {
   state.packageStatusLoadToken += 1;
   state.jobActive = false;
   state.packageStatusLoading = false;
+  state.packageStatusStoreHits = 0;
+  state.refreshingStoredStatuses = false;
   if (closeSession && state.sessionId) {
     void fetch(`/api/sessions/${encodeURIComponent(state.sessionId)}`, { method: 'DELETE' });
   }
@@ -186,13 +192,18 @@ function resetToCredentials({ closeSession = true } = {}) {
 
 function updatePackageStatusProgress({ completed, total, errors = 0 }) {
   if (total === 0) {
-    elements.packageStatusProgress.textContent = 'Các problem trong danh sách chưa có package.';
+    elements.packageStatusProgress.textContent = state.packageStatusStoreHits
+      ? `Đã khôi phục ${state.packageStatusStoreHits} trạng thái từ file cục bộ trên máy.`
+      : 'Các problem trong danh sách chưa có package.';
     return;
   }
   if (completed < total) {
+    const storedNote = state.packageStatusStoreHits
+      ? `Đã đọc ${state.packageStatusStoreHits} problem từ file cục bộ; `
+      : '';
     elements.packageStatusProgress.textContent = state.jobActive
       ? `Đã kiểm tra ${completed}/${total} trạng thái package; tạm dừng trong khi build.`
-      : `Đang kiểm tra loại package ${completed}/${total}; request được xếp hàng để tránh HTTP 429.`;
+      : `${storedNote}đang kiểm tra ${completed}/${total} trạng thái còn thiếu; request được xếp hàng để tránh HTTP 429.`;
     return;
   }
   elements.packageStatusProgress.textContent = errors
@@ -241,18 +252,23 @@ async function loadPackageStatuses() {
   renderProblems();
 }
 
-function applySessionResult(result) {
-  state.packageStatusLoadToken += 1;
-  state.sessionId = result.sessionId;
-  state.problems = result.problems.map((problem) => ({
+function setProblemList(problems, storeHits = 0) {
+  state.problems = problems.map((problem) => ({
     ...problem,
     packageStatus: problem.packageStatus || 'UNBUILT',
   }));
+  state.packageStatusStoreHits = Number(storeHits) || 0;
   state.packageStatusLoading = state.problems.some((problem) => problem.packageStatus === 'LOADING');
   state.selectNewEligible = true;
   state.selected = new Set(state.problems
     .filter((problem) => isEligibleProblem(problem) && !problem.modified)
     .map((problem) => String(problem.id)));
+}
+
+function applySessionResult(result) {
+  state.packageStatusLoadToken += 1;
+  state.sessionId = result.sessionId;
+  setProblemList(result.problems, result.packageStatusStoreHits);
   updateSavedCredentialUi(result.credentialsSaved);
   elements.apiKey.value = '';
   elements.secretKey.value = '';
@@ -326,6 +342,28 @@ elements.clearAll.addEventListener('click', () => {
   state.selectNewEligible = false;
   state.selected.clear();
   renderProblems();
+});
+elements.refreshPackageStatus.addEventListener('click', async () => {
+  if (!state.sessionId || state.packageStatusLoading || state.jobActive) return;
+  state.refreshingStoredStatuses = true;
+  setButtonLoading(elements.refreshPackageStatus, true, 'Đang chuẩn bị quét lại…');
+  setAlert('');
+  try {
+    state.packageStatusLoadToken += 1;
+    const result = await api(
+      `/api/sessions/${encodeURIComponent(state.sessionId)}/package-status-store/refresh`,
+      { method: 'POST' },
+    );
+    setProblemList(result.problems, 0);
+    renderProblems();
+    void loadPackageStatuses();
+  } catch (error) {
+    setAlert(error.message);
+  } finally {
+    state.refreshingStoredStatuses = false;
+    setButtonLoading(elements.refreshPackageStatus, false);
+    updateSelectedCount();
+  }
 });
 elements.reconnectButton.addEventListener('click', resetToCredentials);
 elements.useSavedCredentials.addEventListener('click', () => connectWithSavedCredentials());

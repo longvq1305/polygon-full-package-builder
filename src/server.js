@@ -7,18 +7,23 @@ import { randomUUID } from 'node:crypto';
 import { JobManager } from './job-manager.js';
 import { PolygonClient, PolygonApiError, PolygonRequestScheduler } from './polygon-client.js';
 import { CredentialStore } from './credential-store.js';
+import {
+  fingerprintCredentials,
+  PackageStatusStore,
+} from './package-status-store.js';
 
 const HOST = process.env.HOST || '127.0.0.1';
 const PORT = Number(process.env.PORT) || 4173;
 const PUBLIC_DIR = fileURLToPath(new URL('../public/', import.meta.url));
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 const BODY_LIMIT_BYTES = 32 * 1024;
-const APP_VERSION = '1.1.0';
-const APP_CAPABILITIES = ['full-package-history-filter-v1'];
+const APP_VERSION = '1.2.0';
+const APP_CAPABILITIES = ['full-package-history-filter-v1', 'local-package-status-store-v1'];
 
 const sessions = new Map();
 const jobManager = new JobManager();
 const credentialStore = new CredentialStore();
+const packageStatusStore = new PackageStatusStore();
 const polygonRequestScheduler = new PolygonRequestScheduler();
 const TERMINAL_JOB_STATES = new Set(['COMPLETED', 'COMPLETED_WITH_ERRORS', 'CANCELLED']);
 
@@ -72,6 +77,26 @@ function getSession(sessionId) {
   return session;
 }
 
+function initialPackageStatus(problem, storedStatuses) {
+  if (problem.latestPackage === undefined || problem.latestPackage === null) return 'UNBUILT';
+  return storedStatuses.get(String(problem.id)) || 'LOADING';
+}
+
+function publicSessionProblem(session, problem) {
+  const problemId = String(problem.id);
+  return {
+    id: problem.id,
+    name: problem.name,
+    owner: problem.owner,
+    revision: problem.revision,
+    workingCopyRevision: problem.workingCopyRevision,
+    latestPackage: problem.latestPackage,
+    packageStatus: session.packageStatuses.get(problemId) || 'UNBUILT',
+    packageStatusStored: session.storedPackageStatusIds.has(problemId),
+    modified: Boolean(problem.modified),
+  };
+}
+
 async function openSession({ apiKey, secretKey, remember = false }, response) {
   if (typeof apiKey !== 'string' || typeof secretKey !== 'string' || !apiKey.trim() || !secretKey.trim()) {
     sendError(response, 400, 'Vui lòng nhập đầy đủ API key và secret key.');
@@ -89,11 +114,19 @@ async function openSession({ apiKey, secretKey, remember = false }, response) {
   const ownedProblems = problems
     .filter((problem) => problem.accessType === 'OWNER' && !problem.deleted)
     .sort((left, right) => left.name.localeCompare(right.name, 'vi'));
+  const statusProfileKey = fingerprintCredentials(apiKey, secretKey);
+  const storedStatuses = await packageStatusStore.getStatuses(statusProfileKey, ownedProblems);
   const id = randomUUID();
   if (remember) await credentialStore.save({ apiKey, secretKey });
   sessions.set(id, {
     client,
     problems: ownedProblems,
+    statusProfileKey,
+    packageStatuses: new Map(ownedProblems.map((problem) => [
+      String(problem.id),
+      initialPackageStatus(problem, storedStatuses),
+    ])),
+    storedPackageStatusIds: new Set(storedStatuses.keys()),
     expiresAt: Date.now() + SESSION_TTL_MS,
     activeJobId: null,
   });
@@ -102,16 +135,8 @@ async function openSession({ apiKey, secretKey, remember = false }, response) {
     sessionId: id,
     expiresInSeconds: SESSION_TTL_MS / 1_000,
     credentialsSaved: await credentialStore.hasSaved(),
-    problems: ownedProblems.map(({ id: problemId, name, owner, revision, workingCopyRevision, latestPackage, modified }) => ({
-      id: problemId,
-      name,
-      owner,
-      revision,
-      workingCopyRevision,
-      latestPackage,
-      packageStatus: latestPackage === undefined || latestPackage === null ? 'UNBUILT' : 'LOADING',
-      modified: Boolean(modified),
-    })),
+    packageStatusStoreHits: storedStatuses.size,
+    problems: ownedProblems.map((problem) => publicSessionProblem(sessions.get(id), problem)),
   });
 }
 
@@ -163,15 +188,55 @@ async function getProblemPackageStatus(response, sessionId, problemId) {
     sendError(response, 404, 'Không tìm thấy problem thuộc quyền OWNER trong phiên này.');
     return;
   }
+  const currentStatus = session.packageStatuses.get(String(problem.id));
+  if (currentStatus && currentStatus !== 'LOADING') {
+    sendJson(response, 200, {
+      problemId: problem.id,
+      status: currentStatus,
+      stored: session.storedPackageStatusIds.has(String(problem.id)),
+    });
+    return;
+  }
   if (problem.latestPackage === undefined || problem.latestPackage === null) {
     sendJson(response, 200, { problemId: problem.id, status: 'UNBUILT' });
     return;
   }
 
   const packages = await session.client.listPackages(problem.id);
+  const status = classifyPackageStatus(problem, packages);
+  await packageStatusStore.setStatus(session.statusProfileKey, problem, status);
+  session.packageStatuses.set(String(problem.id), status);
+  session.storedPackageStatusIds.add(String(problem.id));
   sendJson(response, 200, {
     problemId: problem.id,
-    status: classifyPackageStatus(problem, packages),
+    status,
+    stored: false,
+  });
+}
+
+async function refreshStoredPackageStatuses(response, sessionId) {
+  const session = getSession(sessionId);
+  if (!session) {
+    sendError(response, 401, 'Phiên đã hết hạn. Vui lòng kết nối lại.');
+    return;
+  }
+  const activeJob = session.activeJobId ? jobManager.getJob(session.activeJobId) : null;
+  if (activeJob && !TERMINAL_JOB_STATES.has(activeJob.state)) {
+    sendError(response, 409, 'Không thể quét lại trạng thái khi job đang chạy.');
+    return;
+  }
+
+  await packageStatusStore.resetProfile(session.statusProfileKey);
+  session.storedPackageStatusIds.clear();
+  for (const problem of session.problems) {
+    session.packageStatuses.set(
+      String(problem.id),
+      problem.latestPackage === undefined || problem.latestPackage === null ? 'UNBUILT' : 'LOADING',
+    );
+  }
+  sendJson(response, 200, {
+    packageStatusStoreHits: 0,
+    problems: session.problems.map((problem) => publicSessionProblem(session, problem)),
   });
 }
 
@@ -214,6 +279,17 @@ async function createBuildJob(request, response, sessionId) {
     verify: Boolean(verify),
     concurrency,
     destroyClientOnFinish: false,
+    onFinished: async (finishedJob) => {
+      for (const item of finishedJob.items) {
+        if (item.state !== 'READY' && item.state !== 'SKIPPED') continue;
+        const problem = session.problems.find((candidate) => String(candidate.id) === String(item.problem.id));
+        if (!problem) continue;
+        problem.latestPackage = problem.revision;
+        session.packageStatuses.set(String(problem.id), 'FULL');
+        session.storedPackageStatusIds.add(String(problem.id));
+        await packageStatusStore.setStatus(session.statusProfileKey, problem, 'FULL');
+      }
+    },
   });
   session.activeJobId = job.id;
   sendJson(response, 202, job);
@@ -287,6 +363,12 @@ async function handleRequest(request, response) {
     const packageStatusMatch = path.match(/^\/api\/sessions\/([^/]+)\/problems\/([^/]+)\/package-status$/);
     if (request.method === 'GET' && packageStatusMatch) {
       await getProblemPackageStatus(response, packageStatusMatch[1], packageStatusMatch[2]);
+      return;
+    }
+
+    const packageStatusRefreshMatch = path.match(/^\/api\/sessions\/([^/]+)\/package-status-store\/refresh$/);
+    if (request.method === 'POST' && packageStatusRefreshMatch) {
+      await refreshStoredPackageStatuses(response, packageStatusRefreshMatch[1]);
       return;
     }
 
