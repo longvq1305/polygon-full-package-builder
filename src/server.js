@@ -137,19 +137,13 @@ function classifyPackageStatus(problem, packages) {
 
   const readyPackages = packages.filter((packageInfo) => packageInfo.state === 'READY');
   if (readyPackages.length === 0) return 'UNBUILT';
-  const latestRevision = readyPackages.reduce((latest, packageInfo) => {
-    return Number(packageInfo.revision) > Number(latest) ? packageInfo.revision : latest;
-  }, readyPackages[0].revision);
-  const latestPackages = readyPackages.filter((packageInfo) => {
-    return String(packageInfo.revision) === String(latestRevision);
-  });
 
-  if (latestPackages.some((packageInfo) => {
+  if (readyPackages.some((packageInfo) => {
     return ['linux', 'windows', 'full'].includes(String(packageInfo.type).toLowerCase());
   })) {
     return 'FULL';
   }
-  if (latestPackages.some((packageInfo) => String(packageInfo.type).toLowerCase() === 'standard')) {
+  if (readyPackages.some((packageInfo) => String(packageInfo.type).toLowerCase() === 'standard')) {
     return 'STANDARD';
   }
   return 'UNBUILT';
